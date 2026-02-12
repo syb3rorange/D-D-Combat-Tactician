@@ -51,7 +51,8 @@ import {
   Edit2,
   Check,
   Archive,
-  Compass
+  Compass,
+  AlertTriangle
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -68,6 +69,7 @@ const App: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   
   const [rooms, setRooms] = useState<Record<string, Room>>({});
   const [activeRoomId, setActiveRoomId] = useState<string>('');
@@ -448,7 +450,6 @@ const App: React.FC = () => {
                   setActiveRoomId(targetRoomId);
                   
                   // Atomic sync to prevent fetch race
-                  // Fix: narrowed check for role within else block where role can only be 'member' or null
                   if (role === 'member') {
                      syncToCloud({ 
                         rooms: updatedRooms, 
@@ -505,6 +506,13 @@ const App: React.FC = () => {
     setTimeout(() => setNotification(null), 3000);
   };
 
+  const confirmLogout = () => {
+    setRole(null);
+    setSessionCode('');
+    sessionStorage.removeItem('dnd_active_session');
+    setShowLogoutConfirm(false);
+  };
+
   if (!role) return (
     <RoleSelection 
       onSelectDM={() => { 
@@ -529,6 +537,29 @@ const App: React.FC = () => {
               <Key className="animate-pulse" size={20} />
               {notification}
           </div>
+      )}
+
+      {/* Logout Confirmation Modal */}
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 z-[700] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-slate-900 border-2 border-red-500 rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl">
+            <div className="flex flex-col items-center text-center space-y-6">
+              <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center border-2 border-red-500/30">
+                <AlertTriangle size={32} className="text-red-500 animate-pulse" />
+              </div>
+              <h2 className="font-medieval text-3xl text-white">Abandon Session?</h2>
+              <p className="text-slate-400 text-sm leading-relaxed">
+                {role === 'dm' 
+                  ? "As the Dungeon Master, your departure will leave the party in darkness. Are you absolutely certain you wish to end your oversight of this realm?" 
+                  : "Are you sure you want to leave the party? Your hero's state is saved, but you will be disconnected from the active session."}
+              </p>
+              <div className="w-full flex flex-col gap-3">
+                <button onClick={confirmLogout} className="w-full py-4 bg-red-600 hover:bg-red-500 text-white font-black rounded-2xl uppercase tracking-widest shadow-lg">LEAVE SESSION</button>
+                <button onClick={() => setShowLogoutConfirm(false)} className="w-full py-3 text-slate-500 hover:text-white font-bold text-xs uppercase tracking-[0.2em] transition-colors">STAY IN REALM</button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {pendingClaimId && (
@@ -736,7 +767,7 @@ const App: React.FC = () => {
                   {role === 'workshop' ? <Hammer size={24} /> : <Sword size={24} />} 
                   {role === 'dm' ? 'Dungeon Master' : (role === 'workshop' ? 'Map Architect' : 'The Hero')}
                 </h1>
-                <button onClick={() => { setRole(null); setSessionCode(''); sessionStorage.removeItem('dnd_active_session'); }} className="text-slate-500 hover:text-red-500 transition-colors"><LogOut size={18} /></button>
+                <button onClick={() => setShowLogoutConfirm(true)} className="text-slate-500 hover:text-red-500 transition-colors"><LogOut size={18} /></button>
             </div>
             
             <div className="flex-1 overflow-y-auto p-5 space-y-6">
@@ -788,6 +819,7 @@ const App: React.FC = () => {
            <div className="flex gap-4 items-center">
              <div className="flex gap-2 bg-slate-800/50 p-1 rounded-xl border border-slate-700 shadow-xl">
                <button onClick={() => setZoom(z => Math.max(0.2, z - 0.1))} className="p-2 text-slate-400 hover:text-white transition-colors" title="Zoom Out"><ZoomOut size={16} /></button>
+               <button onClick={confirmLogout} className="p-2 text-slate-400 hover:text-red-500 transition-colors" title="Leave Session"><LogOut size={16} /></button>
                <button onClick={() => setZoom(z => Math.min(1.5, z + 0.1))} className="p-2 text-slate-400 hover:text-white transition-colors" title="Zoom In"><ZoomIn size={16} /></button>
                <button onClick={fitToScreen} className="p-2 text-slate-400 hover:text-white transition-colors" title="Fit to Screen"><Maximize size={16} /></button>
              </div>
