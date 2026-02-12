@@ -365,6 +365,16 @@ const App: React.FC = () => {
                       <input type="number" value={editingEntity.maxHp} onChange={e => setEditingEntity({...editingEntity, maxHp: Number(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white" />
                    </div>
                 </div>
+                <div className="grid grid-cols-2 gap-4">
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-500 uppercase">Armor Class (AC)</label>
+                      <input type="number" value={editingEntity.ac} onChange={e => setEditingEntity({...editingEntity, ac: Number(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white focus:border-amber-500 outline-none" />
+                   </div>
+                   <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-500 uppercase">Initiative Mod</label>
+                      <input type="number" value={editingEntity.initiative} onChange={e => setEditingEntity({...editingEntity, initiative: Number(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white focus:border-amber-500 outline-none" />
+                   </div>
+                </div>
                 <button type="submit" className="w-full py-4 bg-amber-600 hover:bg-amber-500 rounded-xl text-white font-black uppercase tracking-widest mt-6 transition-all shadow-lg">Confirm Changes</button>
              </form>
           </div>
