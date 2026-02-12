@@ -2,7 +2,30 @@
 import React from 'react';
 import { Entity, GridSettings } from '../types';
 import { COLORS } from '../constants';
-import { User, BrickWall, Flame, Waves, TreePine, Mountain, Leaf, CircleDot } from 'lucide-react';
+// Add missing EyeOff icon to imports
+import { 
+  User, 
+  BrickWall, 
+  Flame, 
+  Waves, 
+  TreePine, 
+  Mountain, 
+  Leaf, 
+  CircleDot, 
+  DoorClosed, 
+  DoorOpen,
+  Package, 
+  PackageOpen,
+  Skull, 
+  Square, 
+  Landmark, 
+  Droplets, 
+  MoveUp, 
+  Church,
+  Key,
+  ShieldAlert,
+  EyeOff
+} from 'lucide-react';
 
 interface GridMapProps {
   entities: Entity[];
@@ -11,6 +34,8 @@ interface GridMapProps {
   onCellClick: (x: number, y: number) => void;
   role: 'dm' | 'member';
   showEnemyHpToPlayers: boolean;
+  isEditorOpen: boolean;
+  highlightedEntityId?: string | null;
 }
 
 const GridMap: React.FC<GridMapProps> = ({ 
@@ -19,7 +44,9 @@ const GridMap: React.FC<GridMapProps> = ({
   selectedEntityId, 
   onCellClick,
   role,
-  showEnemyHpToPlayers
+  showEnemyHpToPlayers,
+  isEditorOpen,
+  highlightedEntityId
 }) => {
   const { rows, cols, cellSize } = settings;
 
@@ -33,22 +60,31 @@ const GridMap: React.FC<GridMapProps> = ({
     return label;
   };
 
-  const getTerrainIcon = (subtype?: string) => {
+  const getTerrainIcon = (entity: Entity) => {
+    const { subtype, isOpen } = entity;
+    const iconProps = { size: cellSize * 0.6, className: "opacity-80" };
     switch(subtype) {
-      case 'wall': return <BrickWall className="text-slate-300 opacity-60" />;
-      case 'lava': return <Flame className="text-orange-200 animate-pulse" />;
-      case 'water': return <Waves className="text-blue-200" />;
-      case 'forest': return <TreePine className="text-emerald-400" />;
-      case 'rock': return <Mountain className="text-zinc-400" />;
-      case 'grass': return <Leaf className="text-green-300 opacity-40" />;
-      case 'pit': return <CircleDot className="text-slate-800 scale-150" />;
+      case 'wall': return <BrickWall {...iconProps} className="text-slate-300 opacity-60" />;
+      case 'lava': return <Flame {...iconProps} className="text-orange-200 animate-pulse" />;
+      case 'water': return <Waves {...iconProps} className="text-blue-200" />;
+      case 'forest': return <TreePine {...iconProps} className="text-emerald-400" />;
+      case 'rock': return <Mountain {...iconProps} className="text-zinc-400" />;
+      case 'grass': return <Leaf {...iconProps} className="text-green-300 opacity-40" />;
+      case 'pit': return <CircleDot {...iconProps} className="text-slate-800 scale-150" />;
+      case 'door': return isOpen ? <DoorOpen {...iconProps} className="text-amber-400" /> : <DoorClosed {...iconProps} className="text-amber-200" />;
+      case 'chest': return isOpen ? <PackageOpen {...iconProps} className="text-amber-300" /> : <Package {...iconProps} className="text-yellow-400" />;
+      case 'trap': return <Skull {...iconProps} className="text-red-400 animate-pulse" />;
+      case 'pillar': return <Square {...iconProps} className="text-zinc-300 fill-zinc-700" />;
+      case 'statue': return <Landmark {...iconProps} className="text-slate-300" />;
+      case 'fountain': return <Droplets {...iconProps} className="text-cyan-200" />;
+      case 'stairs': return <MoveUp {...iconProps} className="text-slate-100" />;
+      case 'altar': return <Church {...iconProps} className="text-violet-300" />;
       default: return null;
     }
   };
 
   return (
     <div className="flex flex-col items-center select-none p-10">
-      {/* Column Labels */}
       <div className="flex ml-10">
         {Array.from({ length: cols }).map((_, i) => (
           <div 
@@ -62,7 +98,6 @@ const GridMap: React.FC<GridMapProps> = ({
       </div>
 
       <div className="flex">
-        {/* Row Labels */}
         <div className="flex flex-col">
           {Array.from({ length: rows }).map((_, i) => (
             <div 
@@ -75,7 +110,6 @@ const GridMap: React.FC<GridMapProps> = ({
           ))}
         </div>
 
-        {/* The Grid */}
         <div 
           className="relative bg-slate-900 shadow-[0_0_50px_rgba(0,0,0,0.5)] border-2 border-slate-700 rounded-sm"
           style={{
@@ -90,9 +124,12 @@ const GridMap: React.FC<GridMapProps> = ({
         >
           {entities.map(entity => {
             if (entity.x >= cols || entity.y >= rows) return null;
+            if (role === 'member' && entity.isVisibleToPlayers === false) return null;
             
             const isObstacle = entity.type === 'obstacle';
+            const isKey = entity.type === 'key';
             const hideHpOnToken = entity.type === 'enemy' && role === 'member' && !showEnemyHpToPlayers;
+            const isHighlighted = highlightedEntityId === entity.id;
             
             return (
               <div
@@ -105,20 +142,22 @@ const GridMap: React.FC<GridMapProps> = ({
                   isObstacle ? 'rounded-none' : 'rounded-lg border shadow-lg'
                 } ${
                   selectedEntityId === entity.id ? 'scale-110 ring-2 ring-white z-20' : 'hover:scale-105'
-                } ${!isObstacle && entity.hp <= 0 ? 'grayscale opacity-60' : ''}`}
+                } ${!isObstacle && entity.hp <= 0 ? 'grayscale opacity-60' : ''} ${isHighlighted ? 'animate-pulse ring-4 ring-amber-500 z-[50]' : ''}`}
                 style={{
                   left: entity.x * cellSize + (isObstacle ? 0 : 4),
                   top: entity.y * cellSize + (isObstacle ? 0 : 4),
                   width: cellSize - (isObstacle ? 0 : 8),
                   height: cellSize - (isObstacle ? 0 : 8),
-                  backgroundColor: entity.type === 'player' && !entity.claimedBy ? 'rgba(51, 65, 85, 0.4)' : entity.color,
-                  borderColor: isObstacle ? 'transparent' : (selectedEntityId === entity.id ? '#ffffff' : 'rgba(255,255,255,0.2)'),
+                  backgroundColor: isKey ? entity.color : (entity.type === 'player' && !entity.claimedBy ? 'rgba(51, 65, 85, 0.4)' : entity.color),
+                  borderColor: isHighlighted ? '#f59e0b' : (isObstacle ? 'transparent' : (selectedEntityId === entity.id ? '#ffffff' : 'rgba(255,255,255,0.2)')),
                   borderStyle: entity.type === 'player' && !entity.claimedBy ? 'dashed' : 'solid',
                   boxShadow: isObstacle && entity.subtype === 'lava' ? '0 0 15px rgba(249, 115, 22, 0.5)' : undefined
                 }}
               >
                 {isObstacle ? (
-                  getTerrainIcon(entity.subtype)
+                  getTerrainIcon(entity)
+                ) : isKey ? (
+                  <Key size={cellSize * 0.6} className="text-white drop-shadow-lg" />
                 ) : (
                   <>
                     {entity.type === 'player' && !entity.claimedBy ? (
@@ -129,7 +168,6 @@ const GridMap: React.FC<GridMapProps> = ({
                       </span>
                     )}
                     
-                    {/* Mini HP bar on token */}
                     {(!entity.claimedBy && entity.type === 'player') || hideHpOnToken ? null : (
                       <div className="absolute -bottom-1 left-0.5 right-0.5 h-1 bg-black/60 rounded-full overflow-hidden">
                         <div 
@@ -143,11 +181,16 @@ const GridMap: React.FC<GridMapProps> = ({
                     )}
                   </>
                 )}
+                {role === 'dm' && isEditorOpen && isObstacle && (
+                    <div className="absolute inset-0 border border-amber-500/30 bg-amber-500/5"></div>
+                )}
+                {role === 'dm' && entity.isVisibleToPlayers === false && (
+                    <div className="absolute -top-1 -right-1 bg-red-600 rounded-full p-0.5"><EyeOff size={10} className="text-white"/></div>
+                )}
               </div>
             );
           })}
 
-          {/* Interactive Cell Overlay */}
           {Array.from({ length: rows * cols }).map((_, idx) => {
             const x = idx % cols;
             const y = Math.floor(idx / cols);

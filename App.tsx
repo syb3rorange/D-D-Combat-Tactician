@@ -5,39 +5,34 @@ import { INITIAL_GRID_SETTINGS, ENTITY_DEFAULTS, COLORS } from './constants';
 import GridMap from './components/GridMap';
 import EntityCard from './components/EntityCard';
 import RoleSelection from './components/RoleSelection';
+import { TutorialOverlay } from './components/TutorialOverlay';
 import { 
-  Sparkles, 
   ChevronRight, 
   ChevronLeft,
   Sword,
-  ShieldAlert,
-  Users,
-  User,
-  MousePointer2,
-  Trash2,
-  Plus,
   RefreshCw,
   LogOut,
-  BedDouble,
-  Timer,
-  Trophy,
-  Skull,
   Maximize,
   ZoomIn,
   ZoomOut,
-  Heart,
   Flame,
-  Waves,
   BrickWall,
-  TreePine,
   Eraser,
-  Moon,
-  Coffee,
-  Mountain,
-  Leaf,
-  CircleDot,
   Eye,
-  EyeOff
+  EyeOff,
+  Settings2,
+  Grid,
+  DoorClosed,
+  Package,
+  LayoutGrid,
+  Box,
+  Key,
+  Bell,
+  Link,
+  Lock,
+  Unlock,
+  Trash2,
+  X
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -49,18 +44,23 @@ const App: React.FC = () => {
   const [gridSettings, setGridSettings] = useState<GridSettings>(INITIAL_GRID_SETTINGS);
   const [encounterStatus, setEncounterStatus] = useState<EncounterStatus>('active');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [editingEntity, setEditingEntity] = useState<Entity | null>(null);
+  const [isFieldEditorOpen, setIsFieldEditorOpen] = useState(false);
   const [lastSync, setLastSync] = useState<Date>(new Date());
   const [zoom, setZoom] = useState(1);
-  const [placementMode, setPlacementMode] = useState<EntityType | 'wall' | 'lava' | 'water' | 'grass' | 'pit' | 'forest' | 'rock' | 'eraser' | null>(null);
+  const [placementMode, setPlacementMode] = useState<string | null>(null);
   const [showEnemyHpToPlayers, setShowEnemyHpToPlayers] = useState(true);
+  const [notification, setNotification] = useState<string | null>(null);
+
+  // Tutorial State
+  const [isTutorial, setIsTutorial] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState(0);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
   const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
   const syncToCloud = useCallback((data: Partial<SessionData>) => {
-    if (!sessionCode) return;
+    if (!sessionCode || isTutorial) return;
     const storageKey = `dnd_session_${sessionCode}`;
     const existingRaw = localStorage.getItem(storageKey);
     const existing: SessionData = existingRaw ? JSON.parse(existingRaw) : {
@@ -79,10 +79,10 @@ const App: React.FC = () => {
     
     localStorage.setItem(storageKey, JSON.stringify(updated));
     setLastSync(new Date());
-  }, [sessionCode]);
+  }, [sessionCode, isTutorial]);
 
   const fetchFromCloud = useCallback(() => {
-    if (!sessionCode) return;
+    if (!sessionCode || isTutorial) return;
     const storageKey = `dnd_session_${sessionCode}`;
     const rawData = localStorage.getItem(storageKey);
     if (rawData) {
@@ -93,310 +93,402 @@ const App: React.FC = () => {
       setShowEnemyHpToPlayers(data.showEnemyHpToPlayers ?? true);
       setLastSync(new Date(data.updatedAt));
     }
-  }, [sessionCode]);
+  }, [sessionCode, isTutorial]);
 
   const fitToScreen = useCallback(() => {
     if (!containerRef.current) return;
     const padding = 80;
-    const availableWidth = containerRef.current.clientWidth - padding;
-    const availableHeight = containerRef.current.clientHeight - padding;
     const gridWidth = gridSettings.cols * gridSettings.cellSize;
     const gridHeight = gridSettings.rows * gridSettings.cellSize;
-
-    const scaleX = availableWidth / gridWidth;
-    const scaleY = availableHeight / gridHeight;
-    const newZoom = Math.min(Math.max(0.2, Math.min(scaleX, scaleY)), 1.5);
-    setZoom(newZoom);
+    const scaleX = (containerRef.current.clientWidth - padding) / gridWidth;
+    const scaleY = (containerRef.current.clientHeight - padding) / gridHeight;
+    setZoom(Math.min(Math.max(0.2, Math.min(scaleX, scaleY)), 1.5));
   }, [gridSettings]);
 
   useEffect(() => {
-    if (sessionCode) {
+    if (sessionCode && !isTutorial) {
       fetchFromCloud();
       const interval = setInterval(fetchFromCloud, role === 'member' ? 10000 : 5000);
       return () => clearInterval(interval);
     }
-  }, [sessionCode, role, fetchFromCloud]);
+  }, [sessionCode, role, fetchFromCloud, isTutorial]);
 
   useEffect(() => {
-    if (role === 'dm' && sessionCode) {
+    if (role === 'dm' && sessionCode && !isTutorial) {
       syncToCloud({ entities, gridSettings, status: encounterStatus, showEnemyHpToPlayers });
     }
-  }, [entities, gridSettings, encounterStatus, role, sessionCode, syncToCloud, showEnemyHpToPlayers]);
+  }, [entities, gridSettings, encounterStatus, role, sessionCode, syncToCloud, showEnemyHpToPlayers, isTutorial]);
 
-  useEffect(() => {
-    if (entities.length > 0) {
-      fitToScreen();
+  const findEmptySquare = useCallback((startX: number, startY: number) => {
+    const isOccupied = (x: number, y: number) => entities.some(e => e.x === x && e.y === y);
+    let x = startX, y = startY, dx = 0, dy = -1, step = 1, count = 0;
+    for (let i = 0; i < 100; i++) {
+      if (x >= 0 && x < gridSettings.cols && y >= 0 && y < gridSettings.rows) {
+        if (!isOccupied(x, y)) return { x, y };
+      }
+      x += dx; y += dy; count++;
+      if (count === step) {
+        count = 0;
+        const temp = dx; dx = -dy; dy = temp;
+        if (dy === 0) step++;
+      }
     }
-  }, [gridSettings.cols, gridSettings.rows]);
+    return { x: startX, y: startY };
+  }, [entities, gridSettings]);
 
-  const handleSelectDM = () => {
-    const code = generateCode();
-    setSessionCode(code);
-    setRole('dm');
-    syncToCloud({ entities: [], gridSettings: INITIAL_GRID_SETTINGS, status: 'active', showEnemyHpToPlayers: true });
-  };
-
-  const handleJoinSession = (code: string, name: string) => {
-    setSessionCode(code.toUpperCase());
-    setPlayerName(name);
-    setRole('member');
-  };
+  // Handle Tutorial Progression
+  useEffect(() => {
+    if (!isTutorial) return;
+    if (role === 'dm') {
+      if (tutorialStep === 0 && isFieldEditorOpen) setTutorialStep(1);
+      if (tutorialStep === 1 && placementMode === 'chest') setTutorialStep(2);
+      if (tutorialStep === 2 && entities.some(e => e.subtype === 'chest')) setTutorialStep(3);
+      if (tutorialStep === 3) {
+          const chest = entities.find(e => e.subtype === 'chest');
+          if (chest && selectedEntityId === chest.id) setTutorialStep(4);
+      }
+      if (tutorialStep === 4) {
+          const chest = entities.find(e => e.subtype === 'chest');
+          if (chest && chest.linkedEntityId) setTutorialStep(5);
+      }
+      if (tutorialStep === 5 && entities.some(e => e.type === 'key' && e.isVisibleToPlayers !== false)) setTutorialStep(6);
+      if (tutorialStep === 6 && !isFieldEditorOpen) setTutorialStep(7);
+      if (tutorialStep === 7 && entities.some(e => e.type === 'player')) setTutorialStep(8);
+      if (tutorialStep === 8 && entities.some(e => e.type === 'enemy')) setTutorialStep(9);
+    } else {
+      // Hero Tutorial Steps
+      const myChar = entities.find(e => e.claimedBy === playerName);
+      if (tutorialStep === 0 && myChar) setTutorialStep(1);
+      if (tutorialStep === 1 && myChar && (myChar.x === 6 && myChar.y === 7)) setTutorialStep(2);
+      // Logic for picking up key automatically finishes step 1, but we need step 2 for interaction
+      if (tutorialStep === 2 && selectedEntityId === 'tut-door-1') setTutorialStep(3);
+      if (tutorialStep === 3 && myChar && (myChar.x === 7 && myChar.y === 6)) setTutorialStep(4);
+      if (tutorialStep === 4 && entities.find(e => e.id === 'tut-door-1')?.isOpen) setTutorialStep(5);
+    }
+  }, [isTutorial, tutorialStep, role, isFieldEditorOpen, placementMode, entities, playerName, selectedEntityId]);
 
   const handleCellClick = useCallback((x: number, y: number) => {
     const found = entities.find(e => e.x === x && e.y === y);
 
     if (role === 'dm') {
-      if (placementMode === 'eraser') {
-        if (found) setEntities(prev => prev.filter(e => e.id !== found.id));
-        return;
-      }
-
-      if (placementMode && placementMode !== 'player' && placementMode !== 'enemy' && placementMode !== 'teammate' && placementMode !== 'npc') {
-        if (found) return;
-        const newTerrain: Entity = {
-          id: Math.random().toString(36).substr(2, 9),
-          name: placementMode.charAt(0).toUpperCase() + placementMode.slice(1),
-          type: 'obstacle',
-          subtype: placementMode as any,
-          hp: 1,
-          maxHp: 1,
-          ac: 0,
-          initiative: -999,
-          x,
-          y,
-          color: COLORS[placementMode as keyof typeof COLORS]
-        };
-        setEntities(prev => [...prev, newTerrain]);
-        return;
+      if (isFieldEditorOpen) {
+        if (placementMode === 'eraser' && found) {
+          setEntities(prev => prev.filter(e => e.id !== found.id));
+          return;
+        }
+        if (placementMode && !['player', 'enemy'].includes(placementMode) && placementMode !== 'eraser') {
+          if (found) {
+             setSelectedEntityId(found.id);
+             return;
+          }
+          const newTerrain: Entity = {
+            id: Math.random().toString(36).substr(2, 9),
+            name: placementMode.charAt(0).toUpperCase() + placementMode.slice(1),
+            type: 'obstacle',
+            subtype: placementMode as any,
+            hp: 1, maxHp: 1, ac: 0, initiative: -999, x, y,
+            color: COLORS[placementMode as keyof typeof COLORS] || '#475569',
+            isOpen: false, contents: placementMode === 'chest' ? '' : undefined,
+            isVisibleToPlayers: true,
+            isLocked: placementMode === 'chest' || placementMode === 'door'
+          };
+          setEntities(prev => [...prev, newTerrain]);
+          setSelectedEntityId(newTerrain.id);
+          return;
+        }
       }
 
       if (selectedEntityId) {
+        const selected = entities.find(e => e.id === selectedEntityId);
+        if (selected?.type === 'obstacle' && !isFieldEditorOpen) return;
+        if (found && found.id !== selectedEntityId && (found.type !== 'obstacle' || isFieldEditorOpen)) {
+            setSelectedEntityId(found.id);
+            return;
+        }
         setEntities(prev => prev.map(e => e.id === selectedEntityId ? { ...e, x, y } : e));
         setSelectedEntityId(null);
       } else if (found) {
         setSelectedEntityId(found.id);
       }
     } else {
+      // Player branch
+      const myHero = entities.find(e => e.claimedBy === playerName);
+      
+      // PRIORITY 1: Claim empty slots
       if (found && found.type === 'player' && !found.claimedBy) {
         const updated = entities.map(e => e.id === found.id ? { ...e, claimedBy: playerName, name: playerName } : e);
         setEntities(updated);
-        syncToCloud({ entities: updated });
         setSelectedEntityId(found.id);
-      } else if (found && (found.claimedBy === playerName || found.type === 'enemy')) {
+        return;
+      }
+
+      // PRIORITY 2: Movement if hero is selected
+      if (selectedEntityId && myHero && selectedEntityId === myHero.id) {
+         // If clicking a traversable thing or empty space
+         const isTraversable = !found || found.type === 'key' || (found.type === 'obstacle' && found.isOpen);
+         if (isTraversable) {
+            // "Pick up" logic for keys
+            let nextEntities = entities.map(e => e.id === selectedEntityId ? { ...e, x, y } : e);
+            if (found && found.type === 'key') {
+                setNotification(`You collected the ${found.name}!`);
+                setTimeout(() => setNotification(null), 3000);
+                nextEntities = nextEntities.filter(e => e.id !== found.id);
+            }
+            setEntities(nextEntities);
+            setSelectedEntityId(null);
+            return;
+         }
+      }
+
+      // PRIORITY 3: Selection (if didn't move)
+      if (found && (found.claimedBy === playerName || found.type === 'enemy' || found.subtype === 'chest' || found.subtype === 'door' || found.type === 'key')) {
         setSelectedEntityId(found.id);
+      } else if (selectedEntityId && myHero && selectedEntityId === myHero.id) {
+        // Deselect if clicking empty ground and already there? 
+        setSelectedEntityId(null);
       }
     }
-  }, [selectedEntityId, entities, role, playerName, syncToCloud, placementMode]);
+  }, [selectedEntityId, entities, role, playerName, placementMode, isFieldEditorOpen]);
 
   const addEntity = (type: EntityType) => {
     if (role !== 'dm') return;
+    const center = { x: Math.floor(gridSettings.cols / 2), y: Math.floor(gridSettings.rows / 2) };
+    const spawnPos = findEmptySquare(center.x, center.y);
     const newEntity: Entity = {
       id: Math.random().toString(36).substr(2, 9),
       name: type === 'player' ? 'Player Slot' : `New ${type}`,
       type,
-      hp: ENTITY_DEFAULTS.maxHp,
-      maxHp: ENTITY_DEFAULTS.maxHp,
-      ac: ENTITY_DEFAULTS.ac,
-      initiative: ENTITY_DEFAULTS.initiative,
-      x: Math.floor(gridSettings.cols / 2),
-      y: Math.floor(gridSettings.rows / 2),
-      color: COLORS[type]
+      hp: ENTITY_DEFAULTS.maxHp, maxHp: ENTITY_DEFAULTS.maxHp,
+      ac: ENTITY_DEFAULTS.ac, initiative: ENTITY_DEFAULTS.initiative,
+      x: spawnPos.x, y: spawnPos.y, color: COLORS[type],
+      isVisibleToPlayers: type !== 'key'
     };
     setEntities(prev => [...prev, newEntity]);
     setPlacementMode(null);
+    setSelectedEntityId(newEntity.id);
   };
 
-  const handleRest = (type: 'short' | 'long') => {
+  const handleAddLinkedKey = (targetId: string) => {
     if (role !== 'dm') return;
-    setEntities(prev => prev.map(e => ({
-      ...e,
-      hp: type === 'long' ? e.maxHp : Math.min(e.maxHp, e.hp + Math.floor(e.maxHp * 0.25))
-    })));
-    setEncounterStatus(type === 'long' ? 'long-rest' : 'short-rest');
+    const target = entities.find(e => e.id === targetId);
+    if (!target) return;
+
+    const randomColor = `hsl(${Math.random() * 360}, 70%, 60%)`;
+    const keyId = Math.random().toString(36).substr(2, 9);
+    const spawnPos = findEmptySquare(target.x, target.y);
+
+    const newKey: Entity = {
+      id: keyId,
+      name: `Key to ${target.name}`,
+      type: 'key',
+      hp: 1, maxHp: 1, ac: 0, initiative: 0,
+      x: spawnPos.x, y: spawnPos.y,
+      color: randomColor,
+      isVisibleToPlayers: false,
+      linkedEntityId: targetId
+    };
+
+    setEntities(prev => [
+      ...prev.map(e => e.id === targetId ? { ...e, linkedEntityId: keyId, color: randomColor, isLocked: true } : e),
+      newKey
+    ]);
   };
 
-  const updateEntityHp = (id: string, newHp: number) => {
-    const updated = entities.map(e => e.id === id ? { ...e, hp: Math.max(0, Math.min(e.maxHp, newHp)) } : e);
-    setEntities(updated);
-    if (role === 'member') syncToCloud({ entities: updated });
+  const handleUpdateEntity = (updated: Entity) => {
+    const nextEntities = entities.map(e => e.id === updated.id ? updated : e);
+    if (updated.type === 'key' && updated.isVisibleToPlayers !== entities.find(e => e.id === updated.id)?.isVisibleToPlayers) {
+        if (updated.isVisibleToPlayers) {
+            setNotification(`A ${updated.name} has been discovered!`);
+            setTimeout(() => setNotification(null), 5000);
+        }
+    }
+    setEntities(nextEntities);
   };
 
-  const handleEditSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingEntity) return;
-    const updated = entities.map(ent => ent.id === editingEntity.id ? editingEntity : ent);
-    setEntities(updated);
-    if (role === 'member') syncToCloud({ entities: updated });
-    setEditingEntity(null);
+  const handleDeleteEntity = (id: string) => {
+    if (role !== 'dm') return; // REDO: Extra safety check
+    setEntities(prev => prev.filter(e => e.id !== id));
+    if (selectedEntityId === id) setSelectedEntityId(null);
   };
 
-  if (!role) return <RoleSelection onSelectDM={handleSelectDM} onJoin={handleJoinSession} />;
+  if (!role) return <RoleSelection onSelectDM={() => { setSessionCode(generateCode()); setRole('dm'); setIsTutorial(false); }} onJoin={(c, n) => { setSessionCode(c.toUpperCase()); setPlayerName(n); setRole('member'); setIsTutorial(false); }} onTutorial={(t) => {
+    setIsTutorial(true); 
+    setTutorialStep(0); 
+    setRole(t); 
+    setSessionCode('TUTOR'); 
+    setGridSettings(INITIAL_GRID_SETTINGS);
+    setIsSidebarOpen(true);
+    
+    if (t === 'member') {
+      setPlayerName('Tutorial Hero');
+      setEntities([
+        {
+          id: 'tut-slot-1',
+          name: 'Hero Slot',
+          type: 'player',
+          hp: 20, maxHp: 20, ac: 15, initiative: 10,
+          x: 7, y: 7, color: COLORS.player,
+          isVisibleToPlayers: true
+        },
+        {
+          id: 'tut-key-1',
+          name: 'Shiny Key',
+          type: 'key',
+          hp: 1, maxHp: 1, ac: 0, initiative: 0,
+          x: 6, y: 7, color: '#facc15',
+          isVisibleToPlayers: true
+        },
+        {
+          id: 'tut-door-1',
+          name: 'Locked Gate',
+          type: 'obstacle',
+          subtype: 'door',
+          hp: 1, maxHp: 1, ac: 0, initiative: 0,
+          x: 7, y: 6, color: COLORS.door,
+          isOpen: false,
+          isLocked: false,
+          isVisibleToPlayers: true
+        }
+      ]);
+    } else {
+      setPlayerName('');
+      setEntities([]);
+    }
+  }} />;
 
-  const myCharacter = entities.find(e => e.claimedBy === playerName);
-  const isDead = myCharacter && myCharacter.hp <= 0;
-  const filteredEntities = entities.filter(e => e.type !== 'obstacle');
+  const myCharacterId = entities.find(e => e.claimedBy === playerName)?.id;
+  const filteredEntities = entities.filter(e => e.type !== 'obstacle' || (e.subtype === 'chest' || e.subtype === 'door'));
+  const selectedEntity = entities.find(e => e.id === selectedEntityId);
 
   return (
     <div className="flex h-screen bg-slate-950 overflow-hidden relative">
-      {/* Status Overlays */}
-      {encounterStatus !== 'active' && (
-        <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-black/80 backdrop-blur-xl">
-          <div className={`p-12 rounded-[3rem] border-4 text-center shadow-2xl transition-all ${
-            encounterStatus === 'victory' ? 'border-amber-500 bg-amber-950/20' : 
-            encounterStatus === 'defeat' ? 'border-red-600 bg-red-950/20' :
-            encounterStatus === 'short-rest' ? 'border-orange-400 bg-orange-950/20' :
-            'border-indigo-500 bg-indigo-950/20'
-          }`}>
-            {encounterStatus === 'victory' && (
-              <><Trophy size={100} className="text-amber-500 mx-auto mb-6"/><h2 className="font-medieval text-7xl text-amber-400 mb-4 uppercase">Victory</h2></>
-            )}
-            {encounterStatus === 'defeat' && (
-              <><Skull size={100} className="text-red-600 mx-auto mb-6"/><h2 className="font-medieval text-7xl text-red-500 mb-4 uppercase">Defeat</h2></>
-            )}
-            {encounterStatus === 'short-rest' && (
-              <><Coffee size={100} className="text-orange-400 mx-auto mb-6"/><h2 className="font-medieval text-7xl text-orange-400 mb-4 uppercase tracking-wider">Short Rest</h2><p className="text-orange-200/60 font-black uppercase text-sm tracking-widest">The party takes a breather...</p></>
-            )}
-            {encounterStatus === 'long-rest' && (
-              <><Moon size={100} className="text-indigo-400 mx-auto mb-6"/><h2 className="font-medieval text-7xl text-indigo-400 mb-4 uppercase tracking-wider">Long Rest</h2><p className="text-indigo-200/60 font-black uppercase text-sm tracking-widest">The party settles for the night...</p></>
-            )}
-            
-            {role === 'dm' && (
-              <button onClick={() => setEncounterStatus('active')} className="mt-8 px-12 py-4 bg-slate-800 hover:bg-slate-700 text-white font-black rounded-2xl uppercase tracking-widest border-b-4 border-slate-900 active:border-b-0 active:translate-y-1 transition-all">
-                RESUME ADVENTURE
-              </button>
-            )}
+      {notification && (
+          <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[300] bg-amber-600 text-white px-8 py-4 rounded-3xl shadow-2xl font-black flex items-center gap-4 animate-bounce">
+              <Key className="animate-pulse" size={20} />
+              {notification}
           </div>
-        </div>
+      )}
+      {isTutorial && (
+        <TutorialOverlay role={role} currentStep={tutorialStep} onFinish={() => { setRole(null); setIsTutorial(false); }} />
       )}
 
-      {isDead && encounterStatus === 'active' && (
-        <div className="absolute inset-0 z-[90] flex flex-col items-center justify-center bg-red-950/90 backdrop-blur-md">
-          <Skull size={100} className="text-red-500 mb-6 animate-pulse" />
-          <h2 className="font-medieval text-6xl text-white mb-4">YOU ARE DOWN!</h2>
-          <p className="text-white text-xl font-bold uppercase mb-2">HP: 0 / {myCharacter?.maxHp}</p>
-          <p className="text-red-100 opacity-80 text-center">Wait for a teammate to revive you!</p>
-        </div>
-      )}
-
-      {/* Sidebar */}
-      <aside className={`bg-slate-900 border-r-2 border-slate-800 transition-all duration-300 flex flex-col z-30 shadow-2xl ${isSidebarOpen ? 'w-96' : 'w-0'}`}>
-        {isSidebarOpen && (
-          <div className="flex flex-col h-full overflow-hidden">
-            <div className="p-6 border-b-2 border-slate-800">
-              <div className="flex justify-between items-center mb-4">
-                <h1 className="font-medieval text-2xl text-amber-500 flex items-center gap-3 truncate">
-                  <Sword size={24} className="text-amber-600" />
-                  {role === 'dm' ? 'DM Hub' : playerName}
-                </h1>
-                <button onClick={() => setRole(null)} className="p-2 hover:bg-slate-800 rounded-lg text-slate-500 transition-colors"><LogOut size={18} /></button>
+      {role === 'dm' && (
+        <>
+          <div className={`fixed left-0 top-1/2 -translate-y-1/2 z-[60] flex items-center transition-all duration-300 ${isFieldEditorOpen ? 'translate-x-[22rem]' : 'translate-x-0'}`}>
+            <button id="field-editor-toggle" onClick={() => setIsFieldEditorOpen(!isFieldEditorOpen)} className={`bg-amber-600 p-2 rounded-r-xl shadow-2xl border-y border-r border-amber-500 hover:bg-amber-500 transition-colors ${(tutorialStep === 0 || tutorialStep === 6) && isTutorial ? 'animate-pulse scale-110 ring-4 ring-white' : ''}`}>
+              {isFieldEditorOpen ? <ChevronLeft size={20} className="text-white" /> : <ChevronRight size={20} className="text-white" />}
+            </button>
+          </div>
+          <div className={`fixed inset-y-0 left-0 z-[55] w-[22rem] bg-slate-900 border-r border-slate-700 shadow-[20px_0_50px_rgba(0,0,0,0.5)] transition-transform duration-300 transform ${isFieldEditorOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+            <div className="p-6 h-full flex flex-col space-y-6 overflow-y-auto custom-scrollbar pb-24">
+              <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
+                <Settings2 className="text-amber-500" size={24} />
+                <h2 className="font-medieval text-xl text-white">Field Editor</h2>
               </div>
-              <div className="p-2 bg-slate-950 border border-slate-700 rounded-lg text-center">
-                 <span className="text-[10px] font-black text-slate-500 uppercase">Session Code</span>
-                 <p className="text-white font-black tracking-[0.3em]">{sessionCode}</p>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-5 space-y-6">
-              {role === 'dm' && (
+              {selectedEntity && (selectedEntity.subtype === 'chest' || selectedEntity.subtype === 'door') ? (
+                <div className="space-y-4 animate-in fade-in slide-in-from-left-4 duration-300">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-black text-amber-500 uppercase tracking-[0.2em] flex items-center gap-2">
+                      <Box size={14} /> Object Inspector
+                    </h3>
+                    <button onClick={() => setSelectedEntityId(null)} className="text-slate-500 hover:text-white"><X size={16}/></button>
+                  </div>
+                  <div className="bg-slate-950 p-4 rounded-2xl border border-amber-500/30 shadow-2xl space-y-4">
+                     <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-amber-600/20 border border-amber-600/40">
+                           {selectedEntity.subtype === 'chest' ? <Package className="text-amber-500" /> : <DoorClosed className="text-amber-500" />}
+                        </div>
+                        <div>
+                           <h4 className="text-white font-bold">{selectedEntity.name}</h4>
+                           <span className="text-[10px] text-slate-500 font-black uppercase">Grid: {String.fromCharCode(65 + selectedEntity.x)}{selectedEntity.y + 1}</span>
+                        </div>
+                     </div>
+                     <div className="grid grid-cols-2 gap-2">
+                        <button onClick={() => handleUpdateEntity({...selectedEntity, isLocked: !selectedEntity.isLocked})} className={`py-2 rounded-xl text-[10px] font-black flex items-center justify-center gap-2 border transition-all ${selectedEntity.isLocked ? 'bg-red-600 border-red-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400'}`}>
+                          {selectedEntity.isLocked ? <Lock size={12}/> : <Unlock size={12}/>} 
+                          {selectedEntity.isLocked ? 'LOCKED' : 'UNLOCKED'}
+                        </button>
+                        <button onClick={() => handleDeleteEntity(selectedEntity.id)} className="py-2 bg-slate-800 border border-slate-700 hover:bg-red-900/40 hover:border-red-500/50 text-slate-400 hover:text-red-400 rounded-xl text-[10px] font-black flex items-center justify-center gap-2 transition-all">
+                          <Trash2 size={12}/> DELETE
+                        </button>
+                     </div>
+                     {!selectedEntity.linkedEntityId && (
+                       <button onClick={() => handleAddLinkedKey(selectedEntity.id)} className={`w-full py-4 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-black text-xs flex items-center justify-center gap-3 shadow-xl transition-all active:scale-95 ${tutorialStep === 4 && isTutorial ? 'animate-pulse ring-4 ring-white' : ''}`}>
+                         <Link size={18} /> FORGE LINKED KEY
+                       </button>
+                     )}
+                     {selectedEntity.linkedEntityId && (
+                        <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/30 flex items-center justify-between">
+                           <div className="flex items-center gap-2">
+                              <Key size={14} className="text-amber-500" />
+                              <span className="text-[10px] font-black text-amber-500 uppercase">Key Linked</span>
+                           </div>
+                           <div className="w-4 h-4 rounded-full border border-white/20" style={{ backgroundColor: selectedEntity.color }}></div>
+                        </div>
+                     )}
+                  </div>
+                  <button onClick={() => setSelectedEntityId(null)} className="w-full py-2 text-slate-500 text-[10px] font-black uppercase hover:text-slate-300">Back to Brushes</button>
+                </div>
+              ) : (
                 <>
                   <div className="space-y-3">
-                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Encounter Controls</h3>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button onClick={() => setEncounterStatus('victory')} className="p-3 bg-amber-600 hover:bg-amber-500 rounded-xl text-white text-xs font-black shadow-lg">VICTORY</button>
-                      <button onClick={() => setEncounterStatus('defeat')} className="p-3 bg-red-700 hover:bg-red-600 rounded-xl text-white text-xs font-black shadow-lg">DEFEAT</button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button onClick={() => handleRest('short')} className="p-3 bg-orange-600/20 border border-orange-600/50 hover:bg-orange-600/30 rounded-xl text-orange-400 text-xs font-black flex items-center justify-center gap-2">
-                        <Coffee size={14} /> SHORT REST
-                      </button>
-                      <button onClick={() => handleRest('long')} className="p-3 bg-indigo-600/20 border border-indigo-600/50 hover:bg-indigo-600/30 rounded-xl text-indigo-400 text-xs font-black flex items-center justify-center gap-2">
-                        <Moon size={14} /> LONG REST
-                      </button>
-                    </div>
-                    
-                    {/* Enemy HP Toggle for DM */}
-                    <button 
-                      onClick={() => setShowEnemyHpToPlayers(!showEnemyHpToPlayers)}
-                      className={`w-full p-3 rounded-xl text-xs font-black flex items-center justify-center gap-2 border transition-all ${showEnemyHpToPlayers ? 'bg-blue-600/20 border-blue-600/50 text-blue-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
-                    >
-                      {showEnemyHpToPlayers ? <Eye size={16} /> : <EyeOff size={16} />}
-                      {showEnemyHpToPlayers ? 'PLAYERS SEE ENEMY HP' : 'ENEMY HP HIDDEN FROM PLAYERS'}
-                    </button>
-                  </div>
-
-                  <div className="space-y-3">
-                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Summon Entities</h3>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button onClick={() => addEntity('player')} className="p-3 bg-green-600/20 border border-green-600/50 rounded-xl text-green-400 text-xs font-black">PLAYER SLOT</button>
-                      <button onClick={() => addEntity('enemy')} className="p-3 bg-red-600/20 border border-red-600/50 rounded-xl text-red-400 text-xs font-black">ENEMY</button>
+                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2"><LayoutGrid size={12}/> Terrain</h3>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button onClick={() => setPlacementMode('wall')} className={`p-3 rounded-xl text-[10px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'wall' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400'}`}><BrickWall size={16} /> WALL</button>
+                      <button onClick={() => setPlacementMode('lava')} className={`p-3 rounded-xl text-[10px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'lava' ? 'bg-orange-600 text-white' : 'bg-slate-800 text-slate-400'}`}><Flame size={16}/> LAVA</button>
+                      <button onClick={() => setPlacementMode('eraser')} className={`p-3 rounded-xl text-[10px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'eraser' ? 'bg-red-600 text-white' : 'bg-slate-800 text-slate-400'}`}><Eraser size={16}/> ERASE</button>
                     </div>
                   </div>
-
                   <div className="space-y-3">
-                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Terrain Tools</h3>
-                    <div className="grid grid-cols-4 gap-2">
-                      <button 
-                        onClick={() => setPlacementMode(placementMode === 'wall' ? null : 'wall')} 
-                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'wall' ? 'bg-slate-400 border-white text-slate-900' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
-                      >
-                        <BrickWall size={14} /> WALL
-                      </button>
-                      <button 
-                        onClick={() => setPlacementMode(placementMode === 'lava' ? null : 'lava')} 
-                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'lava' ? 'bg-orange-600 border-white text-white' : 'bg-orange-950/20 border-orange-900/50 text-orange-500'}`}
-                      >
-                        <Flame size={14} /> LAVA
-                      </button>
-                      <button 
-                        onClick={() => setPlacementMode(placementMode === 'water' ? null : 'water')} 
-                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'water' ? 'bg-blue-600 border-white text-white' : 'bg-blue-950/20 border-blue-900/50 text-blue-500'}`}
-                      >
-                        <Waves size={14} /> WATER
-                      </button>
-                      <button 
-                        onClick={() => setPlacementMode(placementMode === 'forest' ? null : 'forest')} 
-                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'forest' ? 'bg-emerald-700 border-white text-white' : 'bg-emerald-950/20 border-emerald-900/50 text-emerald-500'}`}
-                      >
-                        <TreePine size={14} /> FOREST
-                      </button>
-                      <button 
-                        onClick={() => setPlacementMode(placementMode === 'rock' ? null : 'rock')} 
-                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'rock' ? 'bg-zinc-600 border-white text-white' : 'bg-zinc-950/20 border-zinc-800/50 text-zinc-400'}`}
-                      >
-                        <Mountain size={14} /> ROCK
-                      </button>
-                      <button 
-                        onClick={() => setPlacementMode(placementMode === 'grass' ? null : 'grass')} 
-                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'grass' ? 'bg-green-700 border-white text-white' : 'bg-green-950/20 border-green-900/50 text-green-500'}`}
-                      >
-                        <Leaf size={14} /> GRASS
-                      </button>
-                      <button 
-                        onClick={() => setPlacementMode(placementMode === 'pit' ? null : 'pit')} 
-                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'pit' ? 'bg-black border-white text-white' : 'bg-black/40 border-slate-800 text-slate-500'}`}
-                      >
-                        <CircleDot size={14} /> PIT
-                      </button>
-                      <button 
-                        onClick={() => setPlacementMode(placementMode === 'eraser' ? null : 'eraser')}
-                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'eraser' ? 'bg-white border-white text-slate-900' : 'bg-slate-800 border-slate-700 text-red-400'}`}
-                      >
-                        <Eraser size={14} /> ERASE
-                      </button>
+                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2"><Box size={12}/> Objects</h3>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button onClick={() => setPlacementMode('door')} className={`p-3 rounded-xl text-[10px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'door' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400'}`}><DoorClosed size={16}/> DOOR</button>
+                      <button onClick={() => setPlacementMode('chest')} className={`p-3 rounded-xl text-[10px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'chest' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400'} ${tutorialStep === 1 && isTutorial ? 'animate-pulse ring-4 ring-white' : ''}`}><Package size={16}/> CHEST</button>
                     </div>
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        </>
+      )}
 
+      <aside className={`bg-slate-900 border-r-2 border-slate-800 transition-all duration-300 flex flex-col z-30 shadow-2xl ${isSidebarOpen ? 'w-96' : 'w-0'}`}>
+        {isSidebarOpen && (
+          <div className="flex flex-col h-full overflow-hidden">
+            <div className="p-6 border-b-2 border-slate-800 flex justify-between items-center">
+                <h1 className="font-medieval text-2xl text-amber-500 flex items-center gap-3 truncate"><Sword size={24} /> {isTutorial ? 'Tutorial' : role}</h1>
+                <button onClick={() => setRole(null)} className="text-slate-500"><LogOut size={18} /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-6">
+              {role === 'dm' && (
+                <div className="space-y-3">
+                  <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Summon</h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => addEntity('player')} className={`p-3 bg-green-600/20 border border-green-600/50 rounded-xl text-green-400 text-xs font-black ${tutorialStep === 8 && isTutorial ? 'animate-pulse ring-4 ring-white' : ''}`}>PLAYER</button>
+                    <button onClick={() => addEntity('enemy')} className={`p-3 bg-red-600/20 border border-red-600/50 rounded-xl text-red-400 text-xs font-black ${tutorialStep === 9 && isTutorial ? 'animate-pulse ring-4 ring-white' : ''}`}>ENEMY</button>
+                  </div>
+                </div>
+              )}
               <div className="space-y-4 pb-12">
-                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Initiative Order</h3>
-                {filteredEntities.sort((a,b) => b.initiative - a.initiative).map(entity => (
+                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Entities</h3>
+                {filteredEntities.map(entity => (
                   <EntityCard 
-                    key={entity.id} entity={entity} isSelected={selectedEntityId === entity.id}
-                    onSelect={setSelectedEntityId} onUpdateHp={updateEntityHp}
-                    onDelete={(id) => role === 'dm' && setEntities(prev => prev.filter(e => e.id !== id))}
-                    onEdit={setEditingEntity} canEdit={role === 'dm' || entity.claimedBy === playerName}
-                    role={role || 'member'} showEnemyHpToPlayers={showEnemyHpToPlayers}
+                    key={entity.id} 
+                    entity={entity} 
+                    entities={entities} 
+                    isSelected={selectedEntityId === entity.id} 
+                    onSelect={setSelectedEntityId} 
+                    onUpdateHp={(id, hp) => setEntities(prev => prev.map(e => e.id === id ? {...e, hp} : e))} 
+                    onUpdateEntity={handleUpdateEntity} 
+                    onDelete={handleDeleteEntity} 
+                    onEdit={() => {}} 
+                    onAddLinkedKey={handleAddLinkedKey} 
+                    canEdit={role === 'dm' || entity.claimedBy === playerName} 
+                    role={role || 'member'} 
+                    showEnemyHpToPlayers={showEnemyHpToPlayers} 
+                    isEditorOpen={isFieldEditorOpen}
+                    isTutorialStep={isTutorial && role === 'member' && tutorialStep === 2 && entity.id === 'tut-door-1'}
                   />
                 ))}
               </div>
@@ -405,107 +497,37 @@ const App: React.FC = () => {
         )}
       </aside>
 
-      {/* Main Grid Area */}
       <main className="flex-1 flex flex-col relative" ref={containerRef}>
-        <header className="p-4 px-8 border-b-2 border-slate-800 bg-slate-900 flex justify-between items-center z-20 shadow-xl">
-           <div className="flex items-center gap-4">
-             <button 
-                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                className="p-2 hover:bg-slate-800 rounded-lg text-slate-400"
-              >
-                {isSidebarOpen ? <ChevronLeft size={20}/> : <ChevronRight size={20}/>}
-              </button>
-             {role === 'dm' && (
-                <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 p-1.5 rounded-lg">
-                  <span className="text-[10px] font-black text-slate-500 px-1">GRID:</span>
-                  <input 
-                    type="number" value={gridSettings.cols}
-                    onChange={(e) => setGridSettings(prev => ({...prev, cols: Math.max(5, Math.min(40, Number(e.target.value)))}))}
-                    className="w-10 bg-slate-800 rounded text-center text-white text-xs font-bold"
-                  />
-                  <span className="text-slate-600">x</span>
-                  <input 
-                    type="number" value={gridSettings.rows}
-                    onChange={(e) => setGridSettings(prev => ({...prev, rows: Math.max(5, Math.min(40, Number(e.target.value)))}))}
-                    className="w-10 bg-slate-800 rounded text-center text-white text-xs font-bold"
-                  />
-                </div>
-             )}
-             <div className="flex items-center gap-2 px-3 border-l border-slate-800 ml-2">
-                <ZoomOut size={16} className="text-slate-500 cursor-pointer hover:text-white" onClick={() => setZoom(z => Math.max(0.2, z - 0.1))} />
-                <input type="range" min="0.2" max="1.5" step="0.05" value={zoom} onChange={e => setZoom(Number(e.target.value))} className="w-24 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer" />
-                <ZoomIn size={16} className="text-slate-500 cursor-pointer hover:text-white" onClick={() => setZoom(z => Math.min(1.5, z + 0.1))} />
-                <button onClick={fitToScreen} className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-400 hover:text-white" title="Fit to Screen"><Maximize size={14} /></button>
-             </div>
-           </div>
-           {placementMode && (
-             <div className="bg-amber-600/20 text-amber-500 px-4 py-1.5 rounded-full border border-amber-600/50 text-[10px] font-black uppercase tracking-widest animate-pulse">
-               Placement Mode: {placementMode} (Click Grid)
-             </div>
+        <header className="p-4 border-b border-slate-800 bg-slate-900 flex justify-between items-center z-20">
+           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 text-slate-400"><ChevronLeft size={20}/></button>
+           {placementMode && isFieldEditorOpen && (
+             <div className="bg-amber-600/20 text-amber-500 px-4 py-1 rounded-full border border-amber-600/50 text-[10px] font-black uppercase tracking-widest animate-pulse">Brush: {placementMode}</div>
            )}
-           <div className="flex items-center gap-2 text-slate-500 text-[10px] font-black uppercase tracking-widest">
-             <RefreshCw size={14} className="animate-spin" /> {lastSync.toLocaleTimeString()}
-           </div>
+           <div className="flex gap-2"><ZoomOut size={16} className="cursor-pointer" onClick={() => setZoom(z => Math.max(0.2, z - 0.1))} /><ZoomIn size={16} className="cursor-pointer" onClick={() => setZoom(z => Math.min(1.5, z + 0.1))} /><Maximize size={16} className="cursor-pointer" onClick={fitToScreen} /></div>
         </header>
-
-        <div className="flex-1 overflow-auto bg-slate-950 relative flex items-center justify-center custom-scrollbar">
-           <div 
-             className="transition-transform duration-200 ease-out"
-             style={{ 
-                transform: `scale(${zoom})`,
-                transformOrigin: 'center center'
-             }}
-           >
+        <div className="flex-1 overflow-auto bg-slate-950 relative flex items-center justify-center">
+           <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}>
              <GridMap 
-               entities={entities} 
-               settings={gridSettings} 
-               selectedEntityId={selectedEntityId} 
-               onCellClick={handleCellClick}
-               role={role || 'member'}
-               showEnemyHpToPlayers={showEnemyHpToPlayers}
+                entities={entities} 
+                settings={gridSettings} 
+                selectedEntityId={selectedEntityId} 
+                onCellClick={handleCellClick} 
+                role={role || 'member'} 
+                showEnemyHpToPlayers={showEnemyHpToPlayers} 
+                isEditorOpen={isFieldEditorOpen} 
+                highlightedEntityId={
+                  isTutorial && role === 'member' ? (
+                    tutorialStep === 0 ? 'tut-slot-1' :
+                    tutorialStep === 1 ? 'tut-key-1' :
+                    tutorialStep === 2 ? 'tut-door-1' :
+                    tutorialStep === 3 ? 'tut-door-1' :
+                    tutorialStep === 4 ? 'tut-door-1' : null
+                  ) : null
+                } 
              />
            </div>
         </div>
       </main>
-
-      {/* Edit Modal */}
-      {editingEntity && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/90 p-4">
-          <div className="bg-slate-900 border-2 border-slate-700 rounded-3xl w-full max-w-md overflow-hidden">
-             <div className="p-6 border-b border-slate-800 flex justify-between bg-slate-800/50">
-                <h2 className="font-bold text-amber-500 uppercase tracking-widest">Update Stats</h2>
-                <button onClick={() => setEditingEntity(null)} className="text-slate-500 text-2xl">&times;</button>
-             </div>
-             <form onSubmit={handleEditSave} className="p-6 space-y-4">
-                <div className="space-y-1">
-                   <label className="text-[10px] font-black text-slate-500 uppercase">Name</label>
-                   <input type="text" value={editingEntity.name} onChange={e => setEditingEntity({...editingEntity, name: e.target.value})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white focus:border-amber-500 outline-none" />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                   <div className="space-y-1">
-                      <label className="text-[10px] font-black text-slate-500 uppercase">HP</label>
-                      <input type="number" value={editingEntity.hp} onChange={e => setEditingEntity({...editingEntity, hp: Number(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white" />
-                   </div>
-                   <div className="space-y-1">
-                      <label className="text-[10px] font-black text-slate-500 uppercase">Max HP</label>
-                      <input type="number" value={editingEntity.maxHp} onChange={e => setEditingEntity({...editingEntity, maxHp: Number(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white" />
-                   </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                   <div className="space-y-1">
-                      <label className="text-[10px] font-black text-slate-500 uppercase">Armor Class (AC)</label>
-                      <input type="number" value={editingEntity.ac} onChange={e => setEditingEntity({...editingEntity, ac: Number(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white focus:border-amber-500 outline-none" />
-                   </div>
-                   <div className="space-y-1">
-                      <label className="text-[10px] font-black text-slate-500 uppercase">Initiative Mod</label>
-                      <input type="number" value={editingEntity.initiative} onChange={e => setEditingEntity({...editingEntity, initiative: Number(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white focus:border-amber-500 outline-none" />
-                   </div>
-                </div>
-                <button type="submit" className="w-full py-4 bg-amber-600 hover:bg-amber-500 rounded-xl text-white font-black uppercase tracking-widest mt-6 transition-all shadow-lg">Confirm Changes</button>
-             </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
