@@ -2,7 +2,7 @@
 import React from 'react';
 import { Entity, GridSettings } from '../types';
 import { COLORS } from '../constants';
-import { User, BrickWall, Flame, Waves } from 'lucide-react';
+import { User, BrickWall, Flame, Waves, TreePine, Mountain, Leaf, CircleDot } from 'lucide-react';
 
 interface GridMapProps {
   entities: Entity[];
@@ -34,6 +34,10 @@ const GridMap: React.FC<GridMapProps> = ({
       case 'wall': return <BrickWall className="text-slate-300 opacity-60" />;
       case 'lava': return <Flame className="text-orange-200 animate-pulse" />;
       case 'water': return <Waves className="text-blue-200" />;
+      case 'forest': return <TreePine className="text-emerald-400" />;
+      case 'rock': return <Mountain className="text-zinc-400" />;
+      case 'grass': return <Leaf className="text-green-300 opacity-40" />;
+      case 'pit': return <CircleDot className="text-slate-800 scale-150" />;
       default: return null;
     }
   };

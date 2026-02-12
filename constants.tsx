@@ -9,7 +9,9 @@ export const COLORS = {
   lava: '#f97316',     // orange-500
   water: '#0ea5e9',    // sky-500
   grass: '#15803d',    // green-700
-  pit: '#020617'       // slate-950
+  pit: '#020617',      // slate-950
+  forest: '#064e3b',   // emerald-900
+  rock: '#3f3f46'      // zinc-700
 };
 
 export const INITIAL_GRID_SETTINGS = {

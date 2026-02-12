@@ -31,7 +31,12 @@ import {
   Waves,
   BrickWall,
   TreePine,
-  Eraser
+  Eraser,
+  Moon,
+  Coffee,
+  Mountain,
+  Leaf,
+  CircleDot
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -46,7 +51,7 @@ const App: React.FC = () => {
   const [editingEntity, setEditingEntity] = useState<Entity | null>(null);
   const [lastSync, setLastSync] = useState<Date>(new Date());
   const [zoom, setZoom] = useState(1);
-  const [placementMode, setPlacementMode] = useState<EntityType | 'wall' | 'lava' | 'water' | 'eraser' | null>(null);
+  const [placementMode, setPlacementMode] = useState<EntityType | 'wall' | 'lava' | 'water' | 'grass' | 'pit' | 'forest' | 'rock' | 'eraser' | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -137,14 +142,13 @@ const App: React.FC = () => {
     const found = entities.find(e => e.x === x && e.y === y);
 
     if (role === 'dm') {
-      // Placement modes
       if (placementMode === 'eraser') {
         if (found) setEntities(prev => prev.filter(e => e.id !== found.id));
         return;
       }
 
-      if (placementMode === 'wall' || placementMode === 'lava' || placementMode === 'water') {
-        if (found) return; // Don't place over existing
+      if (placementMode && placementMode !== 'player' && placementMode !== 'enemy' && placementMode !== 'teammate' && placementMode !== 'npc') {
+        if (found) return;
         const newTerrain: Entity = {
           id: Math.random().toString(36).substr(2, 9),
           name: placementMode.charAt(0).toUpperCase() + placementMode.slice(1),
@@ -153,7 +157,7 @@ const App: React.FC = () => {
           hp: 1,
           maxHp: 1,
           ac: 0,
-          initiative: -999, // Environment usually doesn't have initiative
+          initiative: -999,
           x,
           y,
           color: COLORS[placementMode as keyof typeof COLORS]
@@ -162,7 +166,6 @@ const App: React.FC = () => {
         return;
       }
 
-      // Normal movement or selection
       if (selectedEntityId) {
         setEntities(prev => prev.map(e => e.id === selectedEntityId ? { ...e, x, y } : e));
         setSelectedEntityId(null);
@@ -170,7 +173,6 @@ const App: React.FC = () => {
         setSelectedEntityId(found.id);
       }
     } else {
-      // Player Role
       if (found && found.type === 'player' && !found.claimedBy) {
         const updated = entities.map(e => e.id === found.id ? { ...e, claimedBy: playerName, name: playerName } : e);
         setEntities(updated);
@@ -206,6 +208,7 @@ const App: React.FC = () => {
       ...e,
       hp: type === 'long' ? e.maxHp : Math.min(e.maxHp, e.hp + Math.floor(e.maxHp * 0.25))
     })));
+    setEncounterStatus(type === 'long' ? 'long-rest' : 'short-rest');
   };
 
   const updateEntityHp = (id: string, newHp: number) => {
@@ -231,23 +234,38 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-slate-950 overflow-hidden relative">
-      {/* Overlays */}
+      {/* Status Overlays */}
       {encounterStatus !== 'active' && (
         <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-black/80 backdrop-blur-xl">
-          <div className={`p-12 rounded-[3rem] border-4 text-center shadow-2xl ${encounterStatus === 'victory' ? 'border-amber-500 bg-amber-950/20' : 'border-red-600 bg-red-950/20'}`}>
-            {encounterStatus === 'victory' ? (
-              <><Trophy size={100} className="text-amber-500 mx-auto mb-6"/><h2 className="font-medieval text-7xl text-amber-400 mb-4">VICTORY</h2></>
-            ) : (
-              <><Skull size={100} className="text-red-600 mx-auto mb-6"/><h2 className="font-medieval text-7xl text-red-500 mb-4">DEFEAT</h2></>
+          <div className={`p-12 rounded-[3rem] border-4 text-center shadow-2xl transition-all ${
+            encounterStatus === 'victory' ? 'border-amber-500 bg-amber-950/20' : 
+            encounterStatus === 'defeat' ? 'border-red-600 bg-red-950/20' :
+            encounterStatus === 'short-rest' ? 'border-orange-400 bg-orange-950/20' :
+            'border-indigo-500 bg-indigo-950/20'
+          }`}>
+            {encounterStatus === 'victory' && (
+              <><Trophy size={100} className="text-amber-500 mx-auto mb-6"/><h2 className="font-medieval text-7xl text-amber-400 mb-4 uppercase">Victory</h2></>
             )}
+            {encounterStatus === 'defeat' && (
+              <><Skull size={100} className="text-red-600 mx-auto mb-6"/><h2 className="font-medieval text-7xl text-red-500 mb-4 uppercase">Defeat</h2></>
+            )}
+            {encounterStatus === 'short-rest' && (
+              <><Coffee size={100} className="text-orange-400 mx-auto mb-6"/><h2 className="font-medieval text-7xl text-orange-400 mb-4 uppercase tracking-wider">Short Rest</h2><p className="text-orange-200/60 font-black uppercase text-sm tracking-widest">The party takes a breather...</p></>
+            )}
+            {encounterStatus === 'long-rest' && (
+              <><Moon size={100} className="text-indigo-400 mx-auto mb-6"/><h2 className="font-medieval text-7xl text-indigo-400 mb-4 uppercase tracking-wider">Long Rest</h2><p className="text-indigo-200/60 font-black uppercase text-sm tracking-widest">The party settles for the night...</p></>
+            )}
+            
             {role === 'dm' && (
-              <button onClick={() => setEncounterStatus('active')} className="mt-8 px-8 py-4 bg-slate-800 text-white font-black rounded-2xl uppercase tracking-widest">Return</button>
+              <button onClick={() => setEncounterStatus('active')} className="mt-8 px-12 py-4 bg-slate-800 hover:bg-slate-700 text-white font-black rounded-2xl uppercase tracking-widest border-b-4 border-slate-900 active:border-b-0 active:translate-y-1 transition-all">
+                RESUME ADVENTURE
+              </button>
             )}
           </div>
         </div>
       )}
 
-      {isDead && (
+      {isDead && encounterStatus === 'active' && (
         <div className="absolute inset-0 z-[90] flex flex-col items-center justify-center bg-red-950/90 backdrop-blur-md">
           <Skull size={100} className="text-red-500 mb-6 animate-pulse" />
           <h2 className="font-medieval text-6xl text-white mb-4">YOU ARE DOWN!</h2>
@@ -278,14 +296,18 @@ const App: React.FC = () => {
               {role === 'dm' && (
                 <>
                   <div className="space-y-3">
-                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Combat Flow</h3>
+                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Encounter Controls</h3>
                     <div className="grid grid-cols-2 gap-2">
-                      <button onClick={() => setEncounterStatus('victory')} className="p-3 bg-amber-600 rounded-xl text-white text-xs font-black">VICTORY</button>
-                      <button onClick={() => setEncounterStatus('defeat')} className="p-3 bg-red-700 rounded-xl text-white text-xs font-black">DEFEAT</button>
+                      <button onClick={() => setEncounterStatus('victory')} className="p-3 bg-amber-600 hover:bg-amber-500 rounded-xl text-white text-xs font-black shadow-lg">VICTORY</button>
+                      <button onClick={() => setEncounterStatus('defeat')} className="p-3 bg-red-700 hover:bg-red-600 rounded-xl text-white text-xs font-black shadow-lg">DEFEAT</button>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
-                      <button onClick={() => handleRest('short')} className="p-2 bg-slate-800 rounded-lg text-slate-300 text-[10px] font-black">SHORT REST</button>
-                      <button onClick={() => handleRest('long')} className="p-2 bg-slate-800 rounded-lg text-slate-300 text-[10px] font-black">LONG REST</button>
+                      <button onClick={() => handleRest('short')} className="p-3 bg-orange-600/20 border border-orange-600/50 hover:bg-orange-600/30 rounded-xl text-orange-400 text-xs font-black flex items-center justify-center gap-2">
+                        <Coffee size={14} /> SHORT REST
+                      </button>
+                      <button onClick={() => handleRest('long')} className="p-3 bg-indigo-600/20 border border-indigo-600/50 hover:bg-indigo-600/30 rounded-xl text-indigo-400 text-xs font-black flex items-center justify-center gap-2">
+                        <Moon size={14} /> LONG REST
+                      </button>
                     </div>
                   </div>
 
@@ -299,33 +321,56 @@ const App: React.FC = () => {
 
                   <div className="space-y-3">
                     <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Terrain Tools</h3>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-4 gap-2">
                       <button 
                         onClick={() => setPlacementMode(placementMode === 'wall' ? null : 'wall')} 
-                        className={`p-3 rounded-xl text-xs font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'wall' ? 'bg-slate-400 border-white text-slate-900' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
+                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'wall' ? 'bg-slate-400 border-white text-slate-900' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
                       >
-                        <BrickWall size={18} /> WALL
+                        <BrickWall size={14} /> WALL
                       </button>
                       <button 
                         onClick={() => setPlacementMode(placementMode === 'lava' ? null : 'lava')} 
-                        className={`p-3 rounded-xl text-xs font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'lava' ? 'bg-orange-600 border-white text-white' : 'bg-orange-950/20 border-orange-900/50 text-orange-500'}`}
+                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'lava' ? 'bg-orange-600 border-white text-white' : 'bg-orange-950/20 border-orange-900/50 text-orange-500'}`}
                       >
-                        <Flame size={18} /> LAVA
+                        <Flame size={14} /> LAVA
                       </button>
                       <button 
                         onClick={() => setPlacementMode(placementMode === 'water' ? null : 'water')} 
-                        className={`p-3 rounded-xl text-xs font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'water' ? 'bg-blue-600 border-white text-white' : 'bg-blue-950/20 border-blue-900/50 text-blue-500'}`}
+                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'water' ? 'bg-blue-600 border-white text-white' : 'bg-blue-950/20 border-blue-900/50 text-blue-500'}`}
                       >
-                        <Waves size={18} /> WATER
+                        <Waves size={14} /> WATER
+                      </button>
+                      <button 
+                        onClick={() => setPlacementMode(placementMode === 'forest' ? null : 'forest')} 
+                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'forest' ? 'bg-emerald-700 border-white text-white' : 'bg-emerald-950/20 border-emerald-900/50 text-emerald-500'}`}
+                      >
+                        <TreePine size={14} /> FOREST
+                      </button>
+                      <button 
+                        onClick={() => setPlacementMode(placementMode === 'rock' ? null : 'rock')} 
+                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'rock' ? 'bg-zinc-600 border-white text-white' : 'bg-zinc-950/20 border-zinc-800/50 text-zinc-400'}`}
+                      >
+                        <Mountain size={14} /> ROCK
+                      </button>
+                      <button 
+                        onClick={() => setPlacementMode(placementMode === 'grass' ? null : 'grass')} 
+                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'grass' ? 'bg-green-700 border-white text-white' : 'bg-green-950/20 border-green-900/50 text-green-500'}`}
+                      >
+                        <Leaf size={14} /> GRASS
+                      </button>
+                      <button 
+                        onClick={() => setPlacementMode(placementMode === 'pit' ? null : 'pit')} 
+                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'pit' ? 'bg-black border-white text-white' : 'bg-black/40 border-slate-800 text-slate-500'}`}
+                      >
+                        <CircleDot size={14} /> PIT
+                      </button>
+                      <button 
+                        onClick={() => setPlacementMode(placementMode === 'eraser' ? null : 'eraser')}
+                        className={`p-2 rounded-lg text-[9px] font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'eraser' ? 'bg-white border-white text-slate-900' : 'bg-slate-800 border-slate-700 text-red-400'}`}
+                      >
+                        <Eraser size={14} /> ERASE
                       </button>
                     </div>
-                    <button 
-                      onClick={() => setPlacementMode(placementMode === 'eraser' ? null : 'eraser')}
-                      className={`w-full p-3 rounded-xl text-xs font-black flex items-center justify-center gap-2 border transition-all ${placementMode === 'eraser' ? 'bg-white border-white text-slate-900' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
-                    >
-                      <Eraser size={18} /> {placementMode === 'eraser' ? 'ERASER ACTIVE (CLICK TILE)' : 'ERASE TERRAIN'}
-                    </button>
-                    {placementMode && <p className="text-[10px] text-amber-500 text-center font-bold">MODE ACTIVE: CLICK ON GRID</p>}
                   </div>
                 </>
               )}
