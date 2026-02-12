@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Entity, EntityType, GridSettings, EncounterStatus, SessionData } from './types';
 import { INITIAL_GRID_SETTINGS, ENTITY_DEFAULTS, COLORS } from './constants';
 import GridMap from './components/GridMap';
@@ -43,9 +43,11 @@ const App: React.FC = () => {
 
   const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
+  // Helper to persist data to "Cloud" (localStorage)
   const syncToCloud = useCallback((data: Partial<SessionData>) => {
     if (sessionCode) {
-      const existingRaw = localStorage.getItem(`dnd_session_${sessionCode}`);
+      const storageKey = `dnd_session_${sessionCode}`;
+      const existingRaw = localStorage.getItem(storageKey);
       const existing: SessionData = existingRaw ? JSON.parse(existingRaw) : {
         entities: [],
         gridSettings: INITIAL_GRID_SETTINGS,
@@ -59,17 +61,18 @@ const App: React.FC = () => {
         updatedAt: new Date().toISOString()
       };
       
-      localStorage.setItem(`dnd_session_${sessionCode}`, JSON.stringify(updated));
+      localStorage.setItem(storageKey, JSON.stringify(updated));
       setLastSync(new Date());
     }
   }, [sessionCode]);
 
+  // Helper to fetch latest session state
   const fetchFromCloud = useCallback(() => {
     if (sessionCode) {
-      const rawData = localStorage.getItem(`dnd_session_${sessionCode}`);
+      const storageKey = `dnd_session_${sessionCode}`;
+      const rawData = localStorage.getItem(storageKey);
       if (rawData) {
         const data: SessionData = JSON.parse(rawData);
-        // Only update local state if cloud is newer
         setEntities(data.entities);
         setGridSettings(data.gridSettings);
         setEncounterStatus(data.status);
@@ -78,24 +81,47 @@ const App: React.FC = () => {
     }
   }, [sessionCode]);
 
+  // Sync Timer: Polling logic
   useEffect(() => {
     if (sessionCode) {
+      // First fetch
+      fetchFromCloud();
+      // Regular intervals
       const interval = setInterval(fetchFromCloud, role === 'member' ? 15000 : 5000);
       return () => clearInterval(interval);
     }
   }, [sessionCode, role, fetchFromCloud]);
 
+  // DM Specific: Save every local change to "Cloud"
+  useEffect(() => {
+    if (role === 'dm' && sessionCode) {
+      syncToCloud({ 
+        entities, 
+        gridSettings, 
+        status: encounterStatus 
+      });
+    }
+  }, [entities, gridSettings, encounterStatus, role, sessionCode, syncToCloud]);
+
   const handleSelectDM = () => {
     const code = generateCode();
     setSessionCode(code);
     setRole('dm');
-    syncToCloud({ entities: [], gridSettings: INITIAL_GRID_SETTINGS, status: 'active' });
+    // Save initial state immediately
+    const initialState: SessionData = {
+      entities: [],
+      gridSettings: INITIAL_GRID_SETTINGS,
+      status: 'active',
+      updatedAt: new Date().toISOString()
+    };
+    localStorage.setItem(`dnd_session_${code}`, JSON.stringify(initialState));
   };
 
   const handleJoinSession = (code: string, name: string) => {
     setSessionCode(code.toUpperCase());
     setPlayerName(name);
     setRole('member');
+    // Session state will be picked up by the useEffect fetchFromCloud
   };
 
   const handleCellClick = useCallback((x: number, y: number) => {
@@ -103,16 +129,15 @@ const App: React.FC = () => {
     
     if (role === 'dm') {
       if (selectedEntityId) {
-        const updated = entities.map(e => e.id === selectedEntityId ? { ...e, x, y } : e);
-        setEntities(updated);
-        syncToCloud({ entities: updated });
+        setEntities(prev => prev.map(e => e.id === selectedEntityId ? { ...e, x, y } : e));
         setSelectedEntityId(null);
       } else if (found) {
         setSelectedEntityId(found.id);
       }
     } else {
-      // Member behavior: Claim a token if it's a player slot and unowned
+      // Team Member behavior
       if (found && found.type === 'player' && !found.claimedBy) {
+        // Claim slot
         const updated = entities.map(e => 
           e.id === found.id ? { ...e, claimedBy: playerName, name: playerName } : e
         );
@@ -120,7 +145,6 @@ const App: React.FC = () => {
         syncToCloud({ entities: updated });
         setSelectedEntityId(found.id);
       } else if (found && (found.claimedBy === playerName || found.type === 'enemy')) {
-        // Members can select their own or look at enemies
         setSelectedEntityId(found.id);
       }
     }
@@ -140,18 +164,16 @@ const App: React.FC = () => {
       y: 0,
       color: COLORS[type]
     };
-    const updated = [...entities, newEntity];
-    setEntities(updated);
-    syncToCloud({ entities: updated });
+    setEntities(prev => [...prev, newEntity]);
   };
 
   const handleRest = (type: 'short' | 'long') => {
+    if (role !== 'dm') return;
     const updated = entities.map(e => ({
       ...e,
       hp: type === 'long' ? e.maxHp : Math.min(e.maxHp, e.hp + Math.floor(e.maxHp * 0.25))
     }));
     setEntities(updated);
-    syncToCloud({ entities: updated });
   };
 
   const updateEntityHp = (id: string, newHp: number) => {
@@ -159,7 +181,10 @@ const App: React.FC = () => {
       e.id === id ? { ...e, hp: Math.max(0, Math.min(e.maxHp, newHp)) } : e
     );
     setEntities(updated);
-    syncToCloud({ entities: updated });
+    // If player is updating themselves, force a sync immediately
+    if (role === 'member') {
+       syncToCloud({ entities: updated });
+    }
   };
 
   const handleEditSave = (e: React.FormEvent) => {
@@ -167,7 +192,9 @@ const App: React.FC = () => {
     if (!editingEntity) return;
     const updated = entities.map(ent => ent.id === editingEntity.id ? editingEntity : ent);
     setEntities(updated);
-    syncToCloud({ entities: updated });
+    if (role === 'member') {
+      syncToCloud({ entities: updated });
+    }
     setEditingEntity(null);
   };
 
@@ -186,22 +213,22 @@ const App: React.FC = () => {
             {encounterStatus === 'victory' ? (
               <>
                 <Trophy size={120} className="text-amber-500 mx-auto mb-6 animate-bounce" />
-                <h2 className="font-medieval text-7xl text-amber-400 mb-4">VICTORY</h2>
+                <h2 className="font-medieval text-7xl text-amber-400 mb-4 tracking-tighter">VICTORY</h2>
                 <p className="text-slate-300 font-bold tracking-widest uppercase">The encounter is won! Glory to the heroes!</p>
               </>
             ) : (
               <>
                 <Skull size={120} className="text-red-600 mx-auto mb-6 animate-pulse" />
-                <h2 className="font-medieval text-7xl text-red-500 mb-4">DEFEAT</h2>
+                <h2 className="font-medieval text-7xl text-red-500 mb-4 tracking-tighter">DEFEAT</h2>
                 <p className="text-slate-300 font-bold tracking-widest uppercase">Darkness falls upon the party today...</p>
               </>
             )}
             {role === 'dm' && (
               <button 
-                onClick={() => { setEncounterStatus('active'); syncToCloud({ status: 'active' }); }}
+                onClick={() => setEncounterStatus('active')}
                 className="mt-12 px-8 py-4 bg-slate-800 hover:bg-slate-700 text-white font-black rounded-2xl uppercase tracking-widest transition-all"
               >
-                Reset Battlefield
+                Return to Battlefield
               </button>
             )}
           </div>
@@ -210,10 +237,10 @@ const App: React.FC = () => {
 
       {isDead && (
         <div className="absolute inset-0 z-[90] flex flex-col items-center justify-center bg-red-950/90 backdrop-blur-md animate-in fade-in zoom-in duration-500">
-          <Heart size={100} className="text-red-500 mb-6 animate-pulse" />
-          <h2 className="font-medieval text-6xl text-white mb-4">YOU ARE DOWN!</h2>
+          <Skull size={100} className="text-red-500 mb-6 animate-pulse" />
+          <h2 className="font-medieval text-6xl text-white mb-4 tracking-tighter">YOU ARE DOWN!</h2>
           <p className="text-white text-xl font-bold tracking-widest uppercase mb-2">HP: 0 / {myCharacter?.maxHp}</p>
-          <p className="text-red-200 opacity-80 max-w-md text-center">Your vision fades. You must be stabilized or revived by a teammate to rejoin the fight!</p>
+          <p className="text-red-100 opacity-80 max-w-md text-center">Your vision fades. You must be stabilized or revived by a teammate to rejoin the fight!</p>
           <div className="mt-12 flex gap-4">
              <div className="px-6 py-3 bg-white/10 rounded-xl text-white text-xs font-black uppercase tracking-tighter flex items-center gap-2">
                <RefreshCw size={14} className="animate-spin" /> Waiting for Revive
@@ -277,7 +304,7 @@ const App: React.FC = () => {
                 </div>
               )}
 
-              <div className="space-y-4">
+              <div className="space-y-4 pb-12">
                 <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex justify-between">
                   Initiative Order <span>{entities.length} TOTAL</span>
                 </h3>
@@ -309,16 +336,17 @@ const App: React.FC = () => {
              </div>
              {role === 'dm' && (
                 <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 p-2 rounded-xl">
+                  <span className="text-[10px] font-black text-slate-500 px-2">GRID:</span>
                   <input 
                     type="number" value={gridSettings.cols}
                     onChange={(e) => setGridSettings({...gridSettings, cols: Math.max(5, Math.min(30, Number(e.target.value)))})}
-                    className="w-10 bg-transparent text-center text-white text-xs font-bold"
+                    className="w-10 bg-slate-800 rounded text-center text-white text-xs font-bold p-1"
                   />
                   <span className="text-slate-600">x</span>
                   <input 
                     type="number" value={gridSettings.rows}
                     onChange={(e) => setGridSettings({...gridSettings, rows: Math.max(5, Math.min(30, Number(e.target.value)))})}
-                    className="w-10 bg-transparent text-center text-white text-xs font-bold"
+                    className="w-10 bg-slate-800 rounded text-center text-white text-xs font-bold p-1"
                   />
                 </div>
              )}
@@ -341,37 +369,37 @@ const App: React.FC = () => {
       {/* Edit Modal */}
       {editingEntity && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
-          <div className="bg-slate-900 border-2 border-slate-700 rounded-3xl w-full max-w-md overflow-hidden">
-             <div className="p-6 border-b border-slate-800 flex justify-between">
-                <h2 className="font-bold text-amber-500 uppercase tracking-widest">Update Character</h2>
+          <div className="bg-slate-900 border-2 border-slate-700 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl">
+             <div className="p-6 border-b border-slate-800 flex justify-between bg-slate-800/50">
+                <h2 className="font-bold text-amber-500 uppercase tracking-widest">Update Stats</h2>
                 <button onClick={() => setEditingEntity(null)} className="text-slate-500 text-2xl">&times;</button>
              </div>
              <form onSubmit={handleEditSave} className="p-6 space-y-4">
                 <div className="space-y-1">
                    <label className="text-[10px] font-black text-slate-500 uppercase">Name</label>
-                   <input type="text" value={editingEntity.name} onChange={e => setEditingEntity({...editingEntity, name: e.target.value})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white" />
+                   <input type="text" value={editingEntity.name} onChange={e => setEditingEntity({...editingEntity, name: e.target.value})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white focus:border-amber-500 outline-none" />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                    <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-500 uppercase">Current HP</label>
-                      <input type="number" value={editingEntity.hp} onChange={e => setEditingEntity({...editingEntity, hp: Number(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white" />
+                      <input type="number" value={editingEntity.hp} onChange={e => setEditingEntity({...editingEntity, hp: Number(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white focus:border-amber-500 outline-none" />
                    </div>
                    <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-500 uppercase">Max HP</label>
-                      <input type="number" value={editingEntity.maxHp} onChange={e => setEditingEntity({...editingEntity, maxHp: Number(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white" />
+                      <input type="number" value={editingEntity.maxHp} onChange={e => setEditingEntity({...editingEntity, maxHp: Number(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white focus:border-amber-500 outline-none" />
                    </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                    <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-500 uppercase">AC</label>
-                      <input type="number" value={editingEntity.ac} onChange={e => setEditingEntity({...editingEntity, ac: Number(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white" />
+                      <input type="number" value={editingEntity.ac} onChange={e => setEditingEntity({...editingEntity, ac: Number(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white focus:border-amber-500 outline-none" />
                    </div>
                    <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-500 uppercase">Initiative Mod</label>
-                      <input type="number" value={editingEntity.initiative} onChange={e => setEditingEntity({...editingEntity, initiative: Number(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white" />
+                      <input type="number" value={editingEntity.initiative} onChange={e => setEditingEntity({...editingEntity, initiative: Number(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3 text-white focus:border-amber-500 outline-none" />
                    </div>
                 </div>
-                <button type="submit" className="w-full py-4 bg-amber-600 rounded-xl text-white font-black uppercase tracking-widest mt-6">Confirm Update</button>
+                <button type="submit" className="w-full py-4 bg-amber-600 hover:bg-amber-500 rounded-xl text-white font-black uppercase tracking-widest mt-6 transition-all shadow-lg">Confirm Changes</button>
              </form>
           </div>
         </div>
