@@ -122,7 +122,6 @@ const App: React.FC = () => {
 
   const fetchFromCloud = useCallback(() => {
     if (!sessionCode || role === 'workshop') return;
-    setIsRefreshing(true);
     const storageKey = `dnd_session_${sessionCode}`;
     const rawData = localStorage.getItem(storageKey);
     if (rawData) {
@@ -132,20 +131,36 @@ const App: React.FC = () => {
       setEncounterStatus(data.status);
       setShowEnemyHpToPlayers(data.showEnemyHpToPlayers ?? true);
     }
-    setTimeout(() => setIsRefreshing(false), 800);
   }, [sessionCode, role]);
+
+  // Real-time listener for multi-tab/multi-window sync
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === `dnd_session_${sessionCode}`) {
+        fetchFromCloud();
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [sessionCode, fetchFromCloud]);
 
   useEffect(() => {
     if (sessionCode && role !== 'workshop') {
       fetchFromCloud();
-      const interval = setInterval(fetchFromCloud, 15000);
+      const interval = setInterval(fetchFromCloud, 10000); // Slower polling as backup to storage listener
       return () => clearInterval(interval);
     }
   }, [sessionCode, role, fetchFromCloud]);
 
+  // Sync state to storage whenever it changes (Now enabled for Members to allow claims and HP updates to stick)
   useEffect(() => {
-    if (role === 'dm' && sessionCode) {
-      syncToCloud({ rooms, activeRoomId, status: encounterStatus, showEnemyHpToPlayers });
+    if ((role === 'dm' || role === 'member') && sessionCode && Object.keys(rooms).length > 0) {
+      syncToCloud({ 
+        rooms, 
+        activeRoomId, 
+        status: encounterStatus, 
+        showEnemyHpToPlayers 
+      });
     }
   }, [rooms, activeRoomId, encounterStatus, role, sessionCode, syncToCloud, showEnemyHpToPlayers]);
 
@@ -204,11 +219,18 @@ const App: React.FC = () => {
   };
 
   const exportFullSession = () => {
-    const bundle = { rooms };
+    // Include all state in the bundle for perfect recreation
+    const bundle: SessionData = { 
+      rooms, 
+      activeRoomId, 
+      status: encounterStatus, 
+      showEnemyHpToPlayers,
+      updatedAt: new Date().toISOString()
+    };
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(bundle));
     const downloadAnchorNode = document.createElement('a');
     downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `Full_Adventure_Bundle.json`);
+    downloadAnchorNode.setAttribute("download", `Tactician_Adventure_Bundle.json`);
     document.body.appendChild(downloadAnchorNode);
     downloadAnchorNode.click();
     downloadAnchorNode.remove();
@@ -224,19 +246,16 @@ const App: React.FC = () => {
       try {
         const imported = JSON.parse(evt.target?.result as string);
         if (imported.rooms) {
-          const newRoomsMap = { ...rooms };
-          let lastId = '';
-          Object.values(imported.rooms as Record<string, Room>).forEach(room => {
-            const newId = generateId();
-            newRoomsMap[newId] = { ...room, id: newId, name: `${room.name} (Imported)` };
-            lastId = newId;
-          });
-          setRooms(newRoomsMap);
-          setActiveRoomId(lastId);
-          setNotification("Bundle imported!");
+          // It's a full bundle. Preserve IDs to maintain room/key/door links.
+          setRooms(imported.rooms);
+          if (imported.activeRoomId) setActiveRoomId(imported.activeRoomId);
+          if (imported.status) setEncounterStatus(imported.status);
+          if (imported.showEnemyHpToPlayers !== undefined) setShowEnemyHpToPlayers(imported.showEnemyHpToPlayers);
+          setNotification("Bundle imported successfully!");
         } else if (imported.entities) {
+          // It's a single room file.
           const newId = generateId();
-          createRoom(`${imported.name} (Imported)`, { ...imported, id: newId });
+          createRoom(`${imported.name || 'Imported Room'}`, { ...imported, id: newId });
           setNotification("Room imported!");
         }
       } catch (err) {
@@ -420,6 +439,8 @@ const App: React.FC = () => {
     updateCurrentRoom({ entities: updated });
     setSelectedEntityId(pendingClaimId);
     setPendingClaimId(null);
+    setNotification(`${playerName} joined the fight!`);
+    setTimeout(() => setNotification(null), 3000);
   };
 
   if (!role) return (
@@ -441,10 +462,12 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-slate-950 overflow-hidden relative text-white">
-      <div className={`fixed bottom-4 right-4 z-[400] flex items-center gap-2 bg-slate-900/80 backdrop-blur border border-slate-700 px-4 py-2 rounded-2xl transition-all duration-500 ${isRefreshing ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-          <RefreshCw size={14} className="text-amber-500 animate-spin" />
-          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Syncing Realm...</span>
-      </div>
+      {notification && (
+          <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[300] bg-amber-600 text-white px-8 py-4 rounded-3xl shadow-2xl font-black flex items-center gap-4 animate-bounce border-2 border-amber-400">
+              <Key className="animate-pulse" size={20} />
+              {notification}
+          </div>
+      )}
 
       {pendingClaimId && (
         <div className="fixed inset-0 z-[600] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
@@ -466,13 +489,6 @@ const App: React.FC = () => {
             </div>
           </div>
         </div>
-      )}
-
-      {notification && (
-          <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[300] bg-amber-600 text-white px-8 py-4 rounded-3xl shadow-2xl font-black flex items-center gap-4 animate-bounce border-2 border-amber-400">
-              <Key className="animate-pulse" size={20} />
-              {notification}
-          </div>
       )}
 
       {(role === 'dm' || role === 'workshop') && (
