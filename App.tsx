@@ -85,6 +85,7 @@ const App: React.FC = () => {
   const entities = currentRoom?.entities || [];
   const gridSettings = currentRoom?.gridSettings || INITIAL_GRID_SETTINGS;
 
+  // 1. Initial Load from Session Storage (Persistence of identity)
   useEffect(() => {
     const saved = sessionStorage.getItem('dnd_active_session');
     if (saved) {
@@ -95,6 +96,7 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // 2. Persist Identity to Session Storage
   useEffect(() => {
     if (role && sessionCode) {
       sessionStorage.setItem('dnd_active_session', JSON.stringify({
@@ -126,6 +128,7 @@ const App: React.FC = () => {
     const rawData = localStorage.getItem(storageKey);
     if (rawData) {
       const data: SessionData = JSON.parse(rawData);
+      // Only update if data is newer or local state is empty
       setRooms(data.rooms || {});
       setActiveRoomId(data.activeRoomId);
       setEncounterStatus(data.status);
@@ -147,12 +150,12 @@ const App: React.FC = () => {
   useEffect(() => {
     if (sessionCode && role !== 'workshop') {
       fetchFromCloud();
-      const interval = setInterval(fetchFromCloud, 10000); // Slower polling as backup to storage listener
+      const interval = setInterval(fetchFromCloud, 10000); 
       return () => clearInterval(interval);
     }
   }, [sessionCode, role, fetchFromCloud]);
 
-  // Sync state to storage whenever it changes (Now enabled for Members to allow claims and HP updates to stick)
+  // Sync state to storage whenever it changes (Crucial for persistence)
   useEffect(() => {
     if ((role === 'dm' || role === 'member') && sessionCode && Object.keys(rooms).length > 0) {
       syncToCloud({ 
@@ -219,7 +222,6 @@ const App: React.FC = () => {
   };
 
   const exportFullSession = () => {
-    // Include all state in the bundle for perfect recreation
     const bundle: SessionData = { 
       rooms, 
       activeRoomId, 
@@ -230,7 +232,7 @@ const App: React.FC = () => {
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(bundle));
     const downloadAnchorNode = document.createElement('a');
     downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `Tactician_Adventure_Bundle.json`);
+    downloadAnchorNode.setAttribute("download", `Adventure_Campaign.json`);
     document.body.appendChild(downloadAnchorNode);
     downloadAnchorNode.click();
     downloadAnchorNode.remove();
@@ -246,17 +248,15 @@ const App: React.FC = () => {
       try {
         const imported = JSON.parse(evt.target?.result as string);
         if (imported.rooms) {
-          // It's a full bundle. Preserve IDs to maintain room/key/door links.
           setRooms(imported.rooms);
           if (imported.activeRoomId) setActiveRoomId(imported.activeRoomId);
           if (imported.status) setEncounterStatus(imported.status);
           if (imported.showEnemyHpToPlayers !== undefined) setShowEnemyHpToPlayers(imported.showEnemyHpToPlayers);
-          setNotification("Bundle imported successfully!");
+          setNotification("Adventure Bundle Loaded!");
         } else if (imported.entities) {
-          // It's a single room file.
           const newId = generateId();
           createRoom(`${imported.name || 'Imported Room'}`, { ...imported, id: newId });
-          setNotification("Room imported!");
+          setNotification("Room Imported!");
         }
       } catch (err) {
         setNotification("Error importing map file.");
@@ -294,11 +294,11 @@ const App: React.FC = () => {
     if (selectedEntityId === id) setSelectedEntityId(null);
   };
 
-  const findEmptySquare = useCallback((startX: number, startY: number) => {
-    const isOccupied = (x: number, y: number) => entities.some(e => e.x === x && e.y === y);
+  const findEmptySquare = useCallback((startX: number, startY: number, currentEntities: Entity[], settings: GridSettings) => {
+    const isOccupied = (x: number, y: number) => currentEntities.some(e => e.x === x && e.y === y);
     let x = startX, y = startY, dx = 0, dy = -1, step = 1, count = 0;
     for (let i = 0; i < 100; i++) {
-      if (x >= 0 && x < gridSettings.cols && y >= 0 && y < gridSettings.rows) {
+      if (x >= 0 && x < settings.cols && y >= 0 && y < settings.rows) {
         if (!isOccupied(x, y)) return { x, y };
       }
       x += dx; y += dy; count++;
@@ -309,14 +309,14 @@ const App: React.FC = () => {
       }
     }
     return { x: startX, y: startY };
-  }, [entities, gridSettings]);
+  }, []);
 
   const handleAddLinkedKey = (targetId: string) => {
     const target = entities.find(e => e.id === targetId);
     if (!target) return;
     const randomColor = `hsl(${Math.random() * 360}, 70%, 60%)`;
     const keyId = generateId();
-    const spawnPos = findEmptySquare(target.x, target.y);
+    const spawnPos = findEmptySquare(target.x, target.y, entities, gridSettings);
     const newKey: Entity = {
       id: keyId,
       name: `Key to ${target.name}`,
@@ -380,11 +380,16 @@ const App: React.FC = () => {
         setSelectedEntityId(found.id);
       }
     } else {
+      // Identity check using the persistent playerName state
       const myHero = entities.find(e => e.claimedBy === playerName);
-      if (found && found.type === 'player' && !found.claimedBy) {
+      
+      // If user hasn't claimed a slot and clicks an empty one
+      if (found && found.type === 'player' && !found.claimedBy && !myHero) {
         setPendingClaimId(found.id);
         return;
       }
+
+      // Movement logic
       if (selectedEntityId && myHero && selectedEntityId === myHero.id) {
          const isTraversable = !found || found.type === 'key' || (found.type === 'obstacle' && found.isOpen);
          if (isTraversable) {
@@ -394,31 +399,67 @@ const App: React.FC = () => {
                 setTimeout(() => setNotification(null), 3000);
                 nextEntities = nextEntities.filter(e => e.id !== found.id);
             }
+            
             updateCurrentRoom({ entities: nextEntities });
             setSelectedEntityId(null);
             
+            // CROSS-ROOM TRAVEL LOGIC
             if (found && found.subtype === 'door' && found.linkedRoomId) {
-              setNotification(`Traveling...`);
-              setTimeout(() => {
-                setActiveRoomId(found.linkedRoomId!);
-                setNotification(null);
-              }, 800);
+              const targetRoomId = found.linkedRoomId;
+              const targetRoom = rooms[targetRoomId];
+              
+              if (targetRoom) {
+                setNotification(`Traveling to ${targetRoom.name}...`);
+                const heroToTransfer = { ...myHero, x: x, y: y }; // Temporary until moved
+                
+                setTimeout(() => {
+                  setRooms(prev => {
+                    const source = prev[activeRoomId];
+                    const target = prev[targetRoomId];
+                    if (!source || !target) return prev;
+
+                    // Remove from old room
+                    const cleanedSourceEntities = source.entities.filter(e => e.id !== heroToTransfer.id);
+                    
+                    // Add to new room at a spawn point (center)
+                    const spawnX = Math.floor(target.gridSettings.cols / 2);
+                    const spawnY = Math.floor(target.gridSettings.rows / 2);
+                    const spawnPoint = findEmptySquare(spawnX, spawnY, target.entities, target.gridSettings);
+                    
+                    const transferredHero = { ...heroToTransfer, x: spawnPoint.x, y: spawnPoint.y };
+                    
+                    // Filter just in case they were already there
+                    const cleanedTargetEntities = target.entities.filter(e => e.id !== heroToTransfer.id);
+
+                    return {
+                      ...prev,
+                      [activeRoomId]: { ...source, entities: cleanedSourceEntities },
+                      [targetRoomId]: { ...target, entities: [...cleanedTargetEntities, transferredHero] }
+                    };
+                  });
+                  
+                  setActiveRoomId(targetRoomId);
+                  setNotification(null);
+                }, 800);
+              }
             }
             return;
          }
       }
+      
+      // Selection logic for Heroes
       if (found && (found.claimedBy === playerName || found.type === 'enemy' || found.subtype === 'chest' || found.subtype === 'door' || found.type === 'key')) {
         setSelectedEntityId(found.id);
       } else if (selectedEntityId && myHero && selectedEntityId === myHero.id) {
         setSelectedEntityId(null);
       }
     }
-  }, [selectedEntityId, entities, role, playerName, placementMode, isFieldEditorOpen, activeRoomId, rooms, currentRoom]);
+  }, [selectedEntityId, entities, role, playerName, placementMode, isFieldEditorOpen, activeRoomId, rooms, currentRoom, findEmptySquare]);
 
   const addEntity = (type: EntityType) => {
     if (!currentRoom) return;
     const center = { x: Math.floor(gridSettings.cols / 2), y: Math.floor(gridSettings.rows / 2) };
-    const spawnPos = findEmptySquare(center.x, center.y);
+    const spawnPos = findEmptySquare(center.x, center.y, entities, gridSettings);
     const newEntity: Entity = {
       id: generateId(),
       name: type === 'player' ? 'Player Slot' : `New ${type}`,
@@ -439,7 +480,7 @@ const App: React.FC = () => {
     updateCurrentRoom({ entities: updated });
     setSelectedEntityId(pendingClaimId);
     setPendingClaimId(null);
-    setNotification(`${playerName} joined the fight!`);
+    setNotification(`${playerName} has arrived!`);
     setTimeout(() => setNotification(null), 3000);
   };
 
