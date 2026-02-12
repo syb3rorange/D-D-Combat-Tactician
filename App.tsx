@@ -819,7 +819,6 @@ const App: React.FC = () => {
            <div className="flex gap-4 items-center">
              <div className="flex gap-2 bg-slate-800/50 p-1 rounded-xl border border-slate-700 shadow-xl">
                <button onClick={() => setZoom(z => Math.max(0.2, z - 0.1))} className="p-2 text-slate-400 hover:text-white transition-colors" title="Zoom Out"><ZoomOut size={16} /></button>
-               <button onClick={confirmLogout} className="p-2 text-slate-400 hover:text-red-500 transition-colors" title="Leave Session"><LogOut size={16} /></button>
                <button onClick={() => setZoom(z => Math.min(1.5, z + 0.1))} className="p-2 text-slate-400 hover:text-white transition-colors" title="Zoom In"><ZoomIn size={16} /></button>
                <button onClick={fitToScreen} className="p-2 text-slate-400 hover:text-white transition-colors" title="Fit to Screen"><Maximize size={16} /></button>
              </div>
