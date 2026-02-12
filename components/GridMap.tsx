@@ -30,12 +30,13 @@ const GridMap: React.FC<GridMapProps> = ({
   };
 
   return (
-    <div className="flex flex-col items-center select-none">
+    <div className="flex flex-col items-center select-none p-10">
+      {/* Column Labels */}
       <div className="flex ml-10">
         {Array.from({ length: cols }).map((_, i) => (
           <div 
             key={`col-label-${i}`} 
-            className="flex items-center justify-center text-xs font-black text-slate-500 uppercase"
+            className="flex items-center justify-center text-xs font-black text-slate-600 uppercase"
             style={{ width: cellSize, height: 28 }}
           >
             {getColLabel(i)}
@@ -44,11 +45,12 @@ const GridMap: React.FC<GridMapProps> = ({
       </div>
 
       <div className="flex">
+        {/* Row Labels */}
         <div className="flex flex-col">
           {Array.from({ length: rows }).map((_, i) => (
             <div 
               key={`row-label-${i}`} 
-              className="flex items-center justify-center text-xs font-black text-slate-500 pr-3"
+              className="flex items-center justify-center text-xs font-black text-slate-600 pr-3"
               style={{ height: cellSize, width: 38 }}
             >
               {i + 1}
@@ -56,8 +58,9 @@ const GridMap: React.FC<GridMapProps> = ({
           ))}
         </div>
 
+        {/* The Grid */}
         <div 
-          className="relative bg-slate-900 rounded-xl overflow-hidden shadow-2xl border-4 border-slate-800"
+          className="relative bg-slate-900 shadow-[0_0_50px_rgba(0,0,0,0.5)] border-2 border-slate-700 rounded-sm"
           style={{
             width: cols * cellSize,
             height: rows * cellSize,
@@ -68,48 +71,55 @@ const GridMap: React.FC<GridMapProps> = ({
             backgroundSize: `${cellSize}px ${cellSize}px`
           }}
         >
-          {entities.map(entity => (
-            <div
-              key={entity.id}
-              onClick={(e) => {
-                e.stopPropagation();
-                onCellClick(entity.x, entity.y);
-              }}
-              className={`absolute flex items-center justify-center rounded-xl transition-all duration-300 z-10 cursor-pointer border-2 shadow-lg ${
-                selectedEntityId === entity.id ? 'scale-110 ring-4 ring-white' : 'hover:scale-105'
-              } ${entity.hp <= 0 ? 'grayscale opacity-50' : ''}`}
-              style={{
-                left: entity.x * cellSize + 6,
-                top: entity.y * cellSize + 6,
-                width: cellSize - 12,
-                height: cellSize - 12,
-                backgroundColor: entity.type === 'player' && !entity.claimedBy ? 'rgba(30, 41, 59, 0.8)' : entity.color,
-                borderColor: selectedEntityId === entity.id ? '#ffffff' : 'rgba(255,255,255,0.4)',
-                borderStyle: entity.type === 'player' && !entity.claimedBy ? 'dashed' : 'solid'
-              }}
-            >
-              {entity.type === 'player' && !entity.claimedBy ? (
-                <User size={20} className="text-slate-500" />
-              ) : (
-                <span className="text-white font-black text-sm pointer-events-none drop-shadow-md">
-                  {entity.name.substring(0, 2).toUpperCase()}
-                </span>
-              )}
-              
-              {(!entity.claimedBy && entity.type === 'player') ? null : (
-                <div className="absolute -bottom-2 left-1 right-1 h-1.5 bg-black/60 rounded-full overflow-hidden border border-black/20">
-                  <div 
-                    className={`h-full transition-all duration-300 ${
-                      (entity.hp / entity.maxHp) > 0.5 ? 'bg-green-400' : 
-                      (entity.hp / entity.maxHp) > 0.2 ? 'bg-yellow-400' : 'bg-red-500'
-                    }`}
-                    style={{ width: `${Math.max(0, Math.min(100, (entity.hp / entity.maxHp) * 100))}%` }}
-                  />
-                </div>
-              )}
-            </div>
-          ))}
+          {entities.map(entity => {
+            // Safety check for grid bounds
+            if (entity.x >= cols || entity.y >= rows) return null;
+            
+            return (
+              <div
+                key={entity.id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCellClick(entity.x, entity.y);
+                }}
+                className={`absolute flex items-center justify-center rounded-lg transition-all duration-300 z-10 cursor-pointer border shadow-lg ${
+                  selectedEntityId === entity.id ? 'scale-110 ring-2 ring-white z-20' : 'hover:scale-105'
+                } ${entity.hp <= 0 ? 'grayscale opacity-60' : ''}`}
+                style={{
+                  left: entity.x * cellSize + 4,
+                  top: entity.y * cellSize + 4,
+                  width: cellSize - 8,
+                  height: cellSize - 8,
+                  backgroundColor: entity.type === 'player' && !entity.claimedBy ? 'rgba(51, 65, 85, 0.4)' : entity.color,
+                  borderColor: selectedEntityId === entity.id ? '#ffffff' : 'rgba(255,255,255,0.2)',
+                  borderStyle: entity.type === 'player' && !entity.claimedBy ? 'dashed' : 'solid'
+                }}
+              >
+                {entity.type === 'player' && !entity.claimedBy ? (
+                  <User size={Math.min(24, cellSize / 2)} className="text-slate-600" />
+                ) : (
+                  <span className="text-white font-black text-[12px] pointer-events-none drop-shadow-md">
+                    {entity.name.substring(0, 2).toUpperCase()}
+                  </span>
+                )}
+                
+                {/* Mini HP bar on token */}
+                {(!entity.claimedBy && entity.type === 'player') ? null : (
+                  <div className="absolute -bottom-1 left-0.5 right-0.5 h-1 bg-black/60 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full transition-all duration-300 ${
+                        (entity.hp / entity.maxHp) > 0.5 ? 'bg-green-400' : 
+                        (entity.hp / entity.maxHp) > 0.2 ? 'bg-yellow-400' : 'bg-red-500'
+                      }`}
+                      style={{ width: `${Math.max(0, Math.min(100, (entity.hp / entity.maxHp) * 100))}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
 
+          {/* Interactive Cell Overlay */}
           {Array.from({ length: rows * cols }).map((_, idx) => {
             const x = idx % cols;
             const y = Math.floor(idx / cols);
@@ -125,7 +135,7 @@ const GridMap: React.FC<GridMapProps> = ({
                 }}
                 onClick={() => onCellClick(x, y)}
               >
-                <span className="opacity-0 group-hover:opacity-100 text-[10px] text-slate-600 font-black pointer-events-none">
+                <span className="opacity-0 group-hover:opacity-100 text-[9px] text-slate-700 font-bold pointer-events-none select-none">
                   {getColLabel(x)}{y + 1}
                 </span>
               </div>
