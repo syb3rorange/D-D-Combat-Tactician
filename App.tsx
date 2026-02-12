@@ -26,7 +26,12 @@ import {
   Maximize,
   ZoomIn,
   ZoomOut,
-  Heart
+  Heart,
+  Flame,
+  Waves,
+  BrickWall,
+  TreePine,
+  Eraser
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -38,17 +43,15 @@ const App: React.FC = () => {
   const [gridSettings, setGridSettings] = useState<GridSettings>(INITIAL_GRID_SETTINGS);
   const [encounterStatus, setEncounterStatus] = useState<EncounterStatus>('active');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [aiPrompt, setAiPrompt] = useState('');
-  const [isAiLoading, setIsAiLoading] = useState(false);
   const [editingEntity, setEditingEntity] = useState<Entity | null>(null);
   const [lastSync, setLastSync] = useState<Date>(new Date());
   const [zoom, setZoom] = useState(1);
+  const [placementMode, setPlacementMode] = useState<EntityType | 'wall' | 'lava' | 'water' | 'eraser' | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
   const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
-  // Unified save logic
   const syncToCloud = useCallback((data: Partial<SessionData>) => {
     if (!sessionCode) return;
     const storageKey = `dnd_session_${sessionCode}`;
@@ -70,7 +73,6 @@ const App: React.FC = () => {
     setLastSync(new Date());
   }, [sessionCode]);
 
-  // Fetch logic
   const fetchFromCloud = useCallback(() => {
     if (!sessionCode) return;
     const storageKey = `dnd_session_${sessionCode}`;
@@ -78,13 +80,12 @@ const App: React.FC = () => {
     if (rawData) {
       const data: SessionData = JSON.parse(rawData);
       setEntities(data.entities);
-      setGridSettings(data.gridSettings); // This fixes the grid size loading
+      setGridSettings(data.gridSettings);
       setEncounterStatus(data.status);
       setLastSync(new Date(data.updatedAt));
     }
   }, [sessionCode]);
 
-  // Auto-fit grid to screen
   const fitToScreen = useCallback(() => {
     if (!containerRef.current) return;
     const padding = 80;
@@ -107,14 +108,12 @@ const App: React.FC = () => {
     }
   }, [sessionCode, role, fetchFromCloud]);
 
-  // Ensure DM changes are synced immediately
   useEffect(() => {
     if (role === 'dm' && sessionCode) {
       syncToCloud({ entities, gridSettings, status: encounterStatus });
     }
   }, [entities, gridSettings, encounterStatus, role, sessionCode, syncToCloud]);
 
-  // Auto-fit when grid size changes for the first time
   useEffect(() => {
     if (entities.length > 0) {
       fitToScreen();
@@ -136,7 +135,34 @@ const App: React.FC = () => {
 
   const handleCellClick = useCallback((x: number, y: number) => {
     const found = entities.find(e => e.x === x && e.y === y);
+
     if (role === 'dm') {
+      // Placement modes
+      if (placementMode === 'eraser') {
+        if (found) setEntities(prev => prev.filter(e => e.id !== found.id));
+        return;
+      }
+
+      if (placementMode === 'wall' || placementMode === 'lava' || placementMode === 'water') {
+        if (found) return; // Don't place over existing
+        const newTerrain: Entity = {
+          id: Math.random().toString(36).substr(2, 9),
+          name: placementMode.charAt(0).toUpperCase() + placementMode.slice(1),
+          type: 'obstacle',
+          subtype: placementMode as any,
+          hp: 1,
+          maxHp: 1,
+          ac: 0,
+          initiative: -999, // Environment usually doesn't have initiative
+          x,
+          y,
+          color: COLORS[placementMode as keyof typeof COLORS]
+        };
+        setEntities(prev => [...prev, newTerrain]);
+        return;
+      }
+
+      // Normal movement or selection
       if (selectedEntityId) {
         setEntities(prev => prev.map(e => e.id === selectedEntityId ? { ...e, x, y } : e));
         setSelectedEntityId(null);
@@ -144,6 +170,7 @@ const App: React.FC = () => {
         setSelectedEntityId(found.id);
       }
     } else {
+      // Player Role
       if (found && found.type === 'player' && !found.claimedBy) {
         const updated = entities.map(e => e.id === found.id ? { ...e, claimedBy: playerName, name: playerName } : e);
         setEntities(updated);
@@ -153,7 +180,7 @@ const App: React.FC = () => {
         setSelectedEntityId(found.id);
       }
     }
-  }, [selectedEntityId, entities, role, playerName, syncToCloud]);
+  }, [selectedEntityId, entities, role, playerName, syncToCloud, placementMode]);
 
   const addEntity = (type: EntityType) => {
     if (role !== 'dm') return;
@@ -170,6 +197,7 @@ const App: React.FC = () => {
       color: COLORS[type]
     };
     setEntities(prev => [...prev, newEntity]);
+    setPlacementMode(null);
   };
 
   const handleRest = (type: 'short' | 'long') => {
@@ -199,7 +227,7 @@ const App: React.FC = () => {
 
   const myCharacter = entities.find(e => e.claimedBy === playerName);
   const isDead = myCharacter && myCharacter.hp <= 0;
-  const selectedEntity = entities.find(e => e.id === selectedEntityId);
+  const filteredEntities = entities.filter(e => e.type !== 'obstacle');
 
   return (
     <div className="flex h-screen bg-slate-950 overflow-hidden relative">
@@ -260,19 +288,51 @@ const App: React.FC = () => {
                       <button onClick={() => handleRest('long')} className="p-2 bg-slate-800 rounded-lg text-slate-300 text-[10px] font-black">LONG REST</button>
                     </div>
                   </div>
+
                   <div className="space-y-3">
-                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Summoning</h3>
+                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Summon Entities</h3>
                     <div className="grid grid-cols-2 gap-2">
                       <button onClick={() => addEntity('player')} className="p-3 bg-green-600/20 border border-green-600/50 rounded-xl text-green-400 text-xs font-black">PLAYER SLOT</button>
                       <button onClick={() => addEntity('enemy')} className="p-3 bg-red-600/20 border border-red-600/50 rounded-xl text-red-400 text-xs font-black">ENEMY</button>
                     </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Terrain Tools</h3>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button 
+                        onClick={() => setPlacementMode(placementMode === 'wall' ? null : 'wall')} 
+                        className={`p-3 rounded-xl text-xs font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'wall' ? 'bg-slate-400 border-white text-slate-900' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
+                      >
+                        <BrickWall size={18} /> WALL
+                      </button>
+                      <button 
+                        onClick={() => setPlacementMode(placementMode === 'lava' ? null : 'lava')} 
+                        className={`p-3 rounded-xl text-xs font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'lava' ? 'bg-orange-600 border-white text-white' : 'bg-orange-950/20 border-orange-900/50 text-orange-500'}`}
+                      >
+                        <Flame size={18} /> LAVA
+                      </button>
+                      <button 
+                        onClick={() => setPlacementMode(placementMode === 'water' ? null : 'water')} 
+                        className={`p-3 rounded-xl text-xs font-black flex flex-col items-center gap-1 border transition-all ${placementMode === 'water' ? 'bg-blue-600 border-white text-white' : 'bg-blue-950/20 border-blue-900/50 text-blue-500'}`}
+                      >
+                        <Waves size={18} /> WATER
+                      </button>
+                    </div>
+                    <button 
+                      onClick={() => setPlacementMode(placementMode === 'eraser' ? null : 'eraser')}
+                      className={`w-full p-3 rounded-xl text-xs font-black flex items-center justify-center gap-2 border transition-all ${placementMode === 'eraser' ? 'bg-white border-white text-slate-900' : 'bg-slate-800 border-slate-700 text-slate-400'}`}
+                    >
+                      <Eraser size={18} /> {placementMode === 'eraser' ? 'ERASER ACTIVE (CLICK TILE)' : 'ERASE TERRAIN'}
+                    </button>
+                    {placementMode && <p className="text-[10px] text-amber-500 text-center font-bold">MODE ACTIVE: CLICK ON GRID</p>}
                   </div>
                 </>
               )}
 
               <div className="space-y-4 pb-12">
                 <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Initiative Order</h3>
-                {entities.sort((a,b) => b.initiative - a.initiative).map(entity => (
+                {filteredEntities.sort((a,b) => b.initiative - a.initiative).map(entity => (
                   <EntityCard 
                     key={entity.id} entity={entity} isSelected={selectedEntityId === entity.id}
                     onSelect={setSelectedEntityId} onUpdateHp={updateEntityHp}
@@ -319,6 +379,11 @@ const App: React.FC = () => {
                 <button onClick={fitToScreen} className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-400 hover:text-white" title="Fit to Screen"><Maximize size={14} /></button>
              </div>
            </div>
+           {placementMode && (
+             <div className="bg-amber-600/20 text-amber-500 px-4 py-1.5 rounded-full border border-amber-600/50 text-[10px] font-black uppercase tracking-widest animate-pulse">
+               Placement Mode: {placementMode} (Click Grid)
+             </div>
+           )}
            <div className="flex items-center gap-2 text-slate-500 text-[10px] font-black uppercase tracking-widest">
              <RefreshCw size={14} className="animate-spin" /> {lastSync.toLocaleTimeString()}
            </div>

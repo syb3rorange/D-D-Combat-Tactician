@@ -4,7 +4,12 @@ export const COLORS = {
   teammate: '#3b82f6', // blue-500
   enemy: '#ef4444',    // red-500
   npc: '#eab308',      // yellow-500
-  grid: '#334155'      // slate-700
+  grid: '#334155',     // slate-700
+  wall: '#475569',     // slate-600
+  lava: '#f97316',     // orange-500
+  water: '#0ea5e9',    // sky-500
+  grass: '#15803d',    // green-700
+  pit: '#020617'       // slate-950
 };
 
 export const INITIAL_GRID_SETTINGS = {

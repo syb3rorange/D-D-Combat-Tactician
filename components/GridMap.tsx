@@ -2,7 +2,7 @@
 import React from 'react';
 import { Entity, GridSettings } from '../types';
 import { COLORS } from '../constants';
-import { User } from 'lucide-react';
+import { User, BrickWall, Flame, Waves } from 'lucide-react';
 
 interface GridMapProps {
   entities: Entity[];
@@ -27,6 +27,15 @@ const GridMap: React.FC<GridMapProps> = ({
       i = Math.floor(i / 26) - 1;
     }
     return label;
+  };
+
+  const getTerrainIcon = (subtype?: string) => {
+    switch(subtype) {
+      case 'wall': return <BrickWall className="text-slate-300 opacity-60" />;
+      case 'lava': return <Flame className="text-orange-200 animate-pulse" />;
+      case 'water': return <Waves className="text-blue-200" />;
+      default: return null;
+    }
   };
 
   return (
@@ -72,8 +81,9 @@ const GridMap: React.FC<GridMapProps> = ({
           }}
         >
           {entities.map(entity => {
-            // Safety check for grid bounds
             if (entity.x >= cols || entity.y >= rows) return null;
+            
+            const isObstacle = entity.type === 'obstacle';
             
             return (
               <div
@@ -82,38 +92,47 @@ const GridMap: React.FC<GridMapProps> = ({
                   e.stopPropagation();
                   onCellClick(entity.x, entity.y);
                 }}
-                className={`absolute flex items-center justify-center rounded-lg transition-all duration-300 z-10 cursor-pointer border shadow-lg ${
+                className={`absolute flex items-center justify-center transition-all duration-300 z-10 cursor-pointer ${
+                  isObstacle ? 'rounded-none' : 'rounded-lg border shadow-lg'
+                } ${
                   selectedEntityId === entity.id ? 'scale-110 ring-2 ring-white z-20' : 'hover:scale-105'
-                } ${entity.hp <= 0 ? 'grayscale opacity-60' : ''}`}
+                } ${!isObstacle && entity.hp <= 0 ? 'grayscale opacity-60' : ''}`}
                 style={{
-                  left: entity.x * cellSize + 4,
-                  top: entity.y * cellSize + 4,
-                  width: cellSize - 8,
-                  height: cellSize - 8,
+                  left: entity.x * cellSize + (isObstacle ? 0 : 4),
+                  top: entity.y * cellSize + (isObstacle ? 0 : 4),
+                  width: cellSize - (isObstacle ? 0 : 8),
+                  height: cellSize - (isObstacle ? 0 : 8),
                   backgroundColor: entity.type === 'player' && !entity.claimedBy ? 'rgba(51, 65, 85, 0.4)' : entity.color,
-                  borderColor: selectedEntityId === entity.id ? '#ffffff' : 'rgba(255,255,255,0.2)',
-                  borderStyle: entity.type === 'player' && !entity.claimedBy ? 'dashed' : 'solid'
+                  borderColor: isObstacle ? 'transparent' : (selectedEntityId === entity.id ? '#ffffff' : 'rgba(255,255,255,0.2)'),
+                  borderStyle: entity.type === 'player' && !entity.claimedBy ? 'dashed' : 'solid',
+                  boxShadow: isObstacle && entity.subtype === 'lava' ? '0 0 15px rgba(249, 115, 22, 0.5)' : undefined
                 }}
               >
-                {entity.type === 'player' && !entity.claimedBy ? (
-                  <User size={Math.min(24, cellSize / 2)} className="text-slate-600" />
+                {isObstacle ? (
+                  getTerrainIcon(entity.subtype)
                 ) : (
-                  <span className="text-white font-black text-[12px] pointer-events-none drop-shadow-md">
-                    {entity.name.substring(0, 2).toUpperCase()}
-                  </span>
-                )}
-                
-                {/* Mini HP bar on token */}
-                {(!entity.claimedBy && entity.type === 'player') ? null : (
-                  <div className="absolute -bottom-1 left-0.5 right-0.5 h-1 bg-black/60 rounded-full overflow-hidden">
-                    <div 
-                      className={`h-full transition-all duration-300 ${
-                        (entity.hp / entity.maxHp) > 0.5 ? 'bg-green-400' : 
-                        (entity.hp / entity.maxHp) > 0.2 ? 'bg-yellow-400' : 'bg-red-500'
-                      }`}
-                      style={{ width: `${Math.max(0, Math.min(100, (entity.hp / entity.maxHp) * 100))}%` }}
-                    />
-                  </div>
+                  <>
+                    {entity.type === 'player' && !entity.claimedBy ? (
+                      <User size={Math.min(24, cellSize / 2)} className="text-slate-600" />
+                    ) : (
+                      <span className="text-white font-black text-[12px] pointer-events-none drop-shadow-md">
+                        {entity.name.substring(0, 2).toUpperCase()}
+                      </span>
+                    )}
+                    
+                    {/* Mini HP bar on token */}
+                    {(!entity.claimedBy && entity.type === 'player') ? null : (
+                      <div className="absolute -bottom-1 left-0.5 right-0.5 h-1 bg-black/60 rounded-full overflow-hidden">
+                        <div 
+                          className={`h-full transition-all duration-300 ${
+                            (entity.hp / entity.maxHp) > 0.5 ? 'bg-green-400' : 
+                            (entity.hp / entity.maxHp) > 0.2 ? 'bg-yellow-400' : 'bg-red-500'
+                          }`}
+                          style={{ width: `${Math.max(0, Math.min(100, (entity.hp / entity.maxHp) * 100))}%` }}
+                        />
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             );

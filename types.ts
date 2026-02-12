@@ -1,5 +1,5 @@
 
-export type EntityType = 'player' | 'teammate' | 'enemy' | 'npc';
+export type EntityType = 'player' | 'teammate' | 'enemy' | 'npc' | 'obstacle';
 export type EncounterStatus = 'active' | 'victory' | 'defeat';
 
 export interface Entity {
@@ -15,6 +15,7 @@ export interface Entity {
   color: string;
   claimedBy?: string; // Name of the player who claimed this slot
   notes?: string;
+  subtype?: 'wall' | 'lava' | 'water' | 'grass' | 'pit';
 }
 
 export interface GridSettings {
