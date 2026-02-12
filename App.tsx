@@ -5,7 +5,6 @@ import { INITIAL_GRID_SETTINGS, ENTITY_DEFAULTS, COLORS } from './constants';
 import GridMap from './components/GridMap';
 import EntityCard from './components/EntityCard';
 import RoleSelection from './components/RoleSelection';
-import { generateMonster } from './services/geminiService';
 import { 
   Sparkles, 
   ChevronRight, 
@@ -36,7 +35,9 @@ import {
   Coffee,
   Mountain,
   Leaf,
-  CircleDot
+  CircleDot,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -52,6 +53,7 @@ const App: React.FC = () => {
   const [lastSync, setLastSync] = useState<Date>(new Date());
   const [zoom, setZoom] = useState(1);
   const [placementMode, setPlacementMode] = useState<EntityType | 'wall' | 'lava' | 'water' | 'grass' | 'pit' | 'forest' | 'rock' | 'eraser' | null>(null);
+  const [showEnemyHpToPlayers, setShowEnemyHpToPlayers] = useState(true);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -65,7 +67,8 @@ const App: React.FC = () => {
       entities: [],
       gridSettings: INITIAL_GRID_SETTINGS,
       status: 'active',
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      showEnemyHpToPlayers: true
     };
 
     const updated: SessionData = {
@@ -87,6 +90,7 @@ const App: React.FC = () => {
       setEntities(data.entities);
       setGridSettings(data.gridSettings);
       setEncounterStatus(data.status);
+      setShowEnemyHpToPlayers(data.showEnemyHpToPlayers ?? true);
       setLastSync(new Date(data.updatedAt));
     }
   }, [sessionCode]);
@@ -115,9 +119,9 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (role === 'dm' && sessionCode) {
-      syncToCloud({ entities, gridSettings, status: encounterStatus });
+      syncToCloud({ entities, gridSettings, status: encounterStatus, showEnemyHpToPlayers });
     }
-  }, [entities, gridSettings, encounterStatus, role, sessionCode, syncToCloud]);
+  }, [entities, gridSettings, encounterStatus, role, sessionCode, syncToCloud, showEnemyHpToPlayers]);
 
   useEffect(() => {
     if (entities.length > 0) {
@@ -129,7 +133,7 @@ const App: React.FC = () => {
     const code = generateCode();
     setSessionCode(code);
     setRole('dm');
-    syncToCloud({ entities: [], gridSettings: INITIAL_GRID_SETTINGS, status: 'active' });
+    syncToCloud({ entities: [], gridSettings: INITIAL_GRID_SETTINGS, status: 'active', showEnemyHpToPlayers: true });
   };
 
   const handleJoinSession = (code: string, name: string) => {
@@ -309,6 +313,15 @@ const App: React.FC = () => {
                         <Moon size={14} /> LONG REST
                       </button>
                     </div>
+                    
+                    {/* Enemy HP Toggle for DM */}
+                    <button 
+                      onClick={() => setShowEnemyHpToPlayers(!showEnemyHpToPlayers)}
+                      className={`w-full p-3 rounded-xl text-xs font-black flex items-center justify-center gap-2 border transition-all ${showEnemyHpToPlayers ? 'bg-blue-600/20 border-blue-600/50 text-blue-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
+                    >
+                      {showEnemyHpToPlayers ? <Eye size={16} /> : <EyeOff size={16} />}
+                      {showEnemyHpToPlayers ? 'PLAYERS SEE ENEMY HP' : 'ENEMY HP HIDDEN FROM PLAYERS'}
+                    </button>
                   </div>
 
                   <div className="space-y-3">
@@ -383,6 +396,7 @@ const App: React.FC = () => {
                     onSelect={setSelectedEntityId} onUpdateHp={updateEntityHp}
                     onDelete={(id) => role === 'dm' && setEntities(prev => prev.filter(e => e.id !== id))}
                     onEdit={setEditingEntity} canEdit={role === 'dm' || entity.claimedBy === playerName}
+                    role={role || 'member'} showEnemyHpToPlayers={showEnemyHpToPlayers}
                   />
                 ))}
               </div>
@@ -447,6 +461,8 @@ const App: React.FC = () => {
                settings={gridSettings} 
                selectedEntityId={selectedEntityId} 
                onCellClick={handleCellClick}
+               role={role || 'member'}
+               showEnemyHpToPlayers={showEnemyHpToPlayers}
              />
            </div>
         </div>

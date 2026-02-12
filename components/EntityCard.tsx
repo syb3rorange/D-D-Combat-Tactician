@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { Entity } from '../types';
-import { Shield, Heart, Trash2, Edit3, Plus, Minus, UserCircle } from 'lucide-react';
+import { Shield, Heart, Trash2, Edit3, Plus, Minus, UserCircle, EyeOff } from 'lucide-react';
 
 interface EntityCardProps {
   entity: Entity;
@@ -11,6 +11,8 @@ interface EntityCardProps {
   onSelect: (id: string) => void;
   isSelected: boolean;
   canEdit: boolean;
+  role: 'dm' | 'member';
+  showEnemyHpToPlayers: boolean;
 }
 
 const EntityCard: React.FC<EntityCardProps> = ({ 
@@ -20,11 +22,15 @@ const EntityCard: React.FC<EntityCardProps> = ({
   onEdit, 
   onSelect,
   isSelected,
-  canEdit
+  canEdit,
+  role,
+  showEnemyHpToPlayers
 }) => {
   const hpPercent = Math.max(0, Math.min(100, (entity.hp / entity.maxHp) * 100));
   const isPlayerSlot = entity.type === 'player';
   const isClaimed = !!entity.claimedBy;
+  const isEnemy = entity.type === 'enemy';
+  const shouldHideHp = isEnemy && role === 'member' && !showEnemyHpToPlayers;
   
   const getHpColor = () => {
     if (hpPercent > 50) return 'bg-green-500';
@@ -75,7 +81,7 @@ const EntityCard: React.FC<EntityCardProps> = ({
         </div>
       </div>
 
-      {(isClaimed || entity.type === 'enemy') && (
+      {(isClaimed || isEnemy) && (
         <>
           <div className="flex items-center gap-4 mb-3 bg-black/20 p-2 rounded-lg">
             <div className="flex flex-col items-center justify-center min-w-[32px] border-r border-slate-700 pr-2">
@@ -86,33 +92,46 @@ const EntityCard: React.FC<EntityCardProps> = ({
               <div className="flex justify-between items-end mb-1">
                 <div className="flex items-center gap-1.5 text-white">
                   <Heart size={14} className={`${entity.hp <= 0 ? 'text-slate-600' : 'text-red-500 fill-red-500'}`} />
-                  <span className="text-xs font-bold">{entity.hp} <span className="text-slate-500 text-[10px]">/ {entity.maxHp}</span></span>
+                  {shouldHideHp ? (
+                    <span className="text-[10px] text-slate-500 font-black italic">HP HIDDEN</span>
+                  ) : (
+                    <span className="text-xs font-bold">{entity.hp} <span className="text-slate-500 text-[10px]">/ {entity.maxHp}</span></span>
+                  )}
                 </div>
                 {entity.hp <= 0 && <span className="text-[10px] font-black text-red-500 animate-pulse">DOWN</span>}
               </div>
-              <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden border border-slate-700">
-                <div 
-                  className={`h-full transition-all duration-500 ${getHpColor()}`}
-                  style={{ width: `${hpPercent}%` }}
-                />
-              </div>
+              {!shouldHideHp && (
+                <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden border border-slate-700">
+                  <div 
+                    className={`h-full transition-all duration-500 ${getHpColor()}`}
+                    style={{ width: `${hpPercent}%` }}
+                  />
+                </div>
+              )}
+              {shouldHideHp && (
+                <div className="w-full bg-slate-800/50 h-2 rounded-full flex items-center justify-center">
+                  <EyeOff size={10} className="text-slate-700" />
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <button 
-              onClick={(e) => { e.stopPropagation(); onUpdateHp(entity.id, entity.hp - 1); }}
-              className="flex items-center justify-center gap-1 py-1.5 bg-slate-800 hover:bg-red-900/30 rounded-lg text-[10px] text-red-400 font-black transition-colors"
-            >
-              <Minus size={12} /> DAMAGE
-            </button>
-            <button 
-              onClick={(e) => { e.stopPropagation(); onUpdateHp(entity.id, entity.hp + 1); }}
-              className="flex items-center justify-center gap-1 py-1.5 bg-slate-800 hover:bg-green-900/30 rounded-lg text-[10px] text-green-400 font-black transition-colors"
-            >
-              <Plus size={12} /> HEAL
-            </button>
-          </div>
+          {(canEdit || !isEnemy) && (
+            <div className="grid grid-cols-2 gap-2">
+              <button 
+                onClick={(e) => { e.stopPropagation(); onUpdateHp(entity.id, entity.hp - 1); }}
+                className="flex items-center justify-center gap-1 py-1.5 bg-slate-800 hover:bg-red-900/30 rounded-lg text-[10px] text-red-400 font-black transition-colors"
+              >
+                <Minus size={12} /> DAMAGE
+              </button>
+              <button 
+                onClick={(e) => { e.stopPropagation(); onUpdateHp(entity.id, entity.hp + 1); }}
+                className="flex items-center justify-center gap-1 py-1.5 bg-slate-800 hover:bg-green-900/30 rounded-lg text-[10px] text-green-400 font-black transition-colors"
+              >
+                <Plus size={12} /> HEAL
+              </button>
+            </div>
+          )}
         </>
       )}
     </div>

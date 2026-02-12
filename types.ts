@@ -29,4 +29,5 @@ export interface SessionData {
   gridSettings: GridSettings;
   status: EncounterStatus;
   updatedAt: string;
+  showEnemyHpToPlayers?: boolean;
 }

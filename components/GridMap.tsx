@@ -9,13 +9,17 @@ interface GridMapProps {
   settings: GridSettings;
   selectedEntityId: string | null;
   onCellClick: (x: number, y: number) => void;
+  role: 'dm' | 'member';
+  showEnemyHpToPlayers: boolean;
 }
 
 const GridMap: React.FC<GridMapProps> = ({ 
   entities, 
   settings, 
   selectedEntityId, 
-  onCellClick 
+  onCellClick,
+  role,
+  showEnemyHpToPlayers
 }) => {
   const { rows, cols, cellSize } = settings;
 
@@ -88,6 +92,7 @@ const GridMap: React.FC<GridMapProps> = ({
             if (entity.x >= cols || entity.y >= rows) return null;
             
             const isObstacle = entity.type === 'obstacle';
+            const hideHpOnToken = entity.type === 'enemy' && role === 'member' && !showEnemyHpToPlayers;
             
             return (
               <div
@@ -125,7 +130,7 @@ const GridMap: React.FC<GridMapProps> = ({
                     )}
                     
                     {/* Mini HP bar on token */}
-                    {(!entity.claimedBy && entity.type === 'player') ? null : (
+                    {(!entity.claimedBy && entity.type === 'player') || hideHpOnToken ? null : (
                       <div className="absolute -bottom-1 left-0.5 right-0.5 h-1 bg-black/60 rounded-full overflow-hidden">
                         <div 
                           className={`h-full transition-all duration-300 ${
