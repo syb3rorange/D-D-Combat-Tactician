@@ -34,8 +34,8 @@ const GuideModal: React.FC<{ isOpen: boolean; onClose: () => void; onStartTutori
     {
       title: "Encounters & Rests",
       icon: <Sword className="text-red-500" size={40} />,
-      desc: "Trigger Victory/Defeat screens or Short/Long rests from the sidebar. Resting automatically heals tokens based on D&D 5e logic (Long Rest = Full Heal).",
-      tip: "The session code at the top is what your players need to join."
+      desc: "The session code at the top of your screen is what your heroes need to join your realm. Every 15 seconds, their screen will refresh to match your board.",
+      tip: "Make sure to tell your heroes the code shown in your header!"
     }
   ];
 
@@ -44,7 +44,7 @@ const GuideModal: React.FC<{ isOpen: boolean; onClose: () => void; onStartTutori
       title: "Enter the Realm",
       icon: <Users className="text-blue-500" size={40} />,
       desc: "Enter your character name and the 6-digit code provided by your Dungeon Master. Once inside, look for a green 'Player Slot' on the grid.",
-      tip: "Make sure your name matches your character for the best experience!"
+      tip: "Your screen will refresh every 15 seconds to sync with the Dungeon Master."
     },
     {
       title: "Claiming Your Hero",
@@ -55,7 +55,7 @@ const GuideModal: React.FC<{ isOpen: boolean; onClose: () => void; onStartTutori
     {
       title: "Interaction",
       icon: <LayoutGrid className="text-indigo-400" size={40} />,
-      desc: "See a chest or a door? Click it on the grid or find it in your sidebar. If the DM hasn't locked it, you can open it to reveal treasures or pathways.",
+      desc: "See a chest or a door? Click it on the grid or find it in your sidebar. If the Dungeon Master hasn't locked it, you can open it to reveal treasures.",
       tip: "Chests will display their contents directly in your sidebar once opened."
     },
     {
@@ -227,7 +227,7 @@ const RoleSelection: React.FC<RoleSelectionProps> = ({ onSelectDM, onJoin, onTut
                 onClick={() => onTutorial('dm')}
                 className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-indigo-400 font-black rounded-xl text-[10px] uppercase tracking-[0.2em] border border-slate-700 flex items-center justify-center gap-2"
               >
-                <Sparkles size={14} /> DM Interactive Tutorial
+                <Sparkles size={14} /> Dungeon Master Tutorial
               </button>
             </div>
           </div>
@@ -236,7 +236,7 @@ const RoleSelection: React.FC<RoleSelectionProps> = ({ onSelectDM, onJoin, onTut
             <div className="w-24 h-24 bg-blue-600/20 rounded-3xl flex items-center justify-center mb-8 border-2 border-blue-600/30">
               <Users size={50} className="text-blue-500" />
             </div>
-            <h2 className="font-medieval text-4xl text-white mb-4">Hero</h2>
+            <h2 className="font-medieval text-4xl text-white mb-4">The Hero</h2>
             <p className="text-slate-400 mb-10 text-sm leading-relaxed max-w-[240px]">
               Join the party, claim your token, and track your character's vitals.
             </p>
@@ -253,7 +253,7 @@ const RoleSelection: React.FC<RoleSelectionProps> = ({ onSelectDM, onJoin, onTut
                   onClick={() => onTutorial('member')}
                   className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-indigo-400 font-black rounded-xl text-[10px] uppercase tracking-[0.2em] border border-slate-700 flex items-center justify-center gap-2"
                 >
-                  <Sparkles size={14} /> Hero Interactive Tutorial
+                  <Sparkles size={14} /> Hero Tutorial
                 </button>
               </div>
             ) : (
@@ -275,7 +275,7 @@ const RoleSelection: React.FC<RoleSelectionProps> = ({ onSelectDM, onJoin, onTut
                     onClick={handleJoin}
                     className="flex-[2] py-4 bg-blue-600 text-white font-black rounded-xl uppercase tracking-widest disabled:opacity-30"
                   >
-                    ENTER
+                    ENTER SESSION
                   </button>
                 </div>
               </div>

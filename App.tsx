@@ -32,7 +32,8 @@ import {
   Lock,
   Unlock,
   Trash2,
-  X
+  X,
+  Loader2
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -50,6 +51,7 @@ const App: React.FC = () => {
   const [placementMode, setPlacementMode] = useState<string | null>(null);
   const [showEnemyHpToPlayers, setShowEnemyHpToPlayers] = useState(true);
   const [notification, setNotification] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Tutorial State
   const [isTutorial, setIsTutorial] = useState(false);
@@ -58,6 +60,28 @@ const App: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
+
+  // Persist session to session storage so reloads don't lose the connection
+  useEffect(() => {
+    const saved = sessionStorage.getItem('dnd_active_session');
+    if (saved) {
+      const data = JSON.parse(saved);
+      setRole(data.role);
+      setPlayerName(data.playerName);
+      setSessionCode(data.sessionCode);
+      setIsTutorial(data.isTutorial || false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (role && sessionCode) {
+      sessionStorage.setItem('dnd_active_session', JSON.stringify({
+        role, playerName, sessionCode, isTutorial
+      }));
+    } else if (role === null) {
+      sessionStorage.removeItem('dnd_active_session');
+    }
+  }, [role, playerName, sessionCode, isTutorial]);
 
   const syncToCloud = useCallback((data: Partial<SessionData>) => {
     if (!sessionCode || isTutorial) return;
@@ -83,6 +107,10 @@ const App: React.FC = () => {
 
   const fetchFromCloud = useCallback(() => {
     if (!sessionCode || isTutorial) return;
+    
+    // Show visual "Reloading" indicator
+    setIsRefreshing(true);
+    
     const storageKey = `dnd_session_${sessionCode}`;
     const rawData = localStorage.getItem(storageKey);
     if (rawData) {
@@ -93,6 +121,9 @@ const App: React.FC = () => {
       setShowEnemyHpToPlayers(data.showEnemyHpToPlayers ?? true);
       setLastSync(new Date(data.updatedAt));
     }
+
+    // Hide indicator after a brief "processing" delay to feel like a reload
+    setTimeout(() => setIsRefreshing(false), 800);
   }, [sessionCode, isTutorial]);
 
   const fitToScreen = useCallback(() => {
@@ -105,10 +136,11 @@ const App: React.FC = () => {
     setZoom(Math.min(Math.max(0.2, Math.min(scaleX, scaleY)), 1.5));
   }, [gridSettings]);
 
+  // The 15-second refresh interval requested by user
   useEffect(() => {
     if (sessionCode && !isTutorial) {
       fetchFromCloud();
-      const interval = setInterval(fetchFromCloud, role === 'member' ? 10000 : 5000);
+      const interval = setInterval(fetchFromCloud, 15000);
       return () => clearInterval(interval);
     }
   }, [sessionCode, role, fetchFromCloud, isTutorial]);
@@ -304,8 +336,19 @@ const App: React.FC = () => {
 
   if (!role) return (
     <RoleSelection 
-      onSelectDM={() => { setSessionCode(generateCode()); setRole('dm'); setIsTutorial(false); setPlayerName('The Dungeon Master'); }} 
-      onJoin={(c, n) => { setSessionCode(c.toUpperCase()); setPlayerName(n); setRole('member'); setIsTutorial(false); }} 
+      onSelectDM={() => { 
+        const code = generateCode();
+        setSessionCode(code); 
+        setRole('dm'); 
+        setIsTutorial(false); 
+        setPlayerName('The Dungeon Master'); 
+      }} 
+      onJoin={(c, n) => { 
+        setSessionCode(c.toUpperCase()); 
+        setPlayerName(n); 
+        setRole('member'); 
+        setIsTutorial(false); 
+      }} 
       onTutorial={(t) => {
         setIsTutorial(true); 
         setTutorialStep(0); 
@@ -329,6 +372,19 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-slate-950 overflow-hidden relative">
+      {/* Refreshing Indicator */}
+      {isRefreshing && (
+        <div className="fixed inset-0 z-[500] bg-black/40 backdrop-blur-sm flex items-center justify-center transition-all duration-300">
+           <div className="bg-slate-900 border-2 border-amber-500/50 p-8 rounded-[2rem] shadow-[0_0_50px_rgba(0,0,0,0.8)] flex flex-col items-center gap-4 animate-in zoom-in duration-300">
+              <Loader2 size={48} className="text-amber-500 animate-spin" />
+              <div className="text-center">
+                <p className="text-white font-black text-xl font-medieval tracking-widest uppercase">Refreshing Session</p>
+                <p className="text-slate-400 text-xs font-bold uppercase tracking-wider mt-1">Syncing with Dungeon Master...</p>
+              </div>
+           </div>
+        </div>
+      )}
+
       {notification && (
           <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[300] bg-amber-600 text-white px-8 py-4 rounded-3xl shadow-2xl font-black flex items-center gap-4 animate-bounce">
               <Key className="animate-pulse" size={20} />
@@ -416,7 +472,7 @@ const App: React.FC = () => {
           <div className="flex flex-col h-full overflow-hidden">
             <div className="p-6 border-b-2 border-slate-800 flex justify-between items-center">
                 <h1 className="font-medieval text-xl text-amber-500 flex items-center gap-3 truncate"><Sword size={24} /> {isTutorial ? 'Tutorial' : (role === 'dm' ? 'Dungeon Master' : 'The Hero')}</h1>
-                <button onClick={() => setRole(null)} className="text-slate-500 hover:text-red-500 transition-colors"><LogOut size={18} /></button>
+                <button onClick={() => { setRole(null); setSessionCode(''); }} className="text-slate-500 hover:text-red-500 transition-colors"><LogOut size={18} /></button>
             </div>
             <div className="flex-1 overflow-y-auto p-5 space-y-6">
               {role === 'dm' && (
@@ -459,8 +515,8 @@ const App: React.FC = () => {
         <header className="p-4 border-b border-slate-800 bg-slate-900 flex justify-between items-center z-20">
            <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 text-slate-400"><ChevronLeft size={20}/></button>
            {!isTutorial && (
-             <div className="flex flex-col items-center">
-               <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Session Code</span>
+             <div className="flex flex-col items-center bg-black/40 px-6 py-2 rounded-2xl border border-slate-700">
+               <span className="text-[10px] text-amber-500 font-black uppercase tracking-widest">Session Code</span>
                <span className="text-xl font-medieval text-white tracking-[0.2em]">{sessionCode}</span>
              </div>
            )}
