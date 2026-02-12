@@ -1,0 +1,5 @@
+{
+  "name": "D&D Combat Tactician",
+  "description": "A robust virtual tabletop grid for D&D encounters, featuring HP tracking, entity management, and AI-powered monster generation.",
+  "requestFramePermissions": []
+}
