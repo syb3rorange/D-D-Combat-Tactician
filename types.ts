@@ -20,6 +20,7 @@ export interface Entity {
   isOpen?: boolean;  // For chests and doors
   isLocked?: boolean; // For interactive objects
   linkedEntityId?: string; // ID of the key that opens this, or the object this key opens
+  linkedRoomId?: string; // ID of the room this door leads to
   isVisibleToPlayers?: boolean; // For hidden keys/traps
 }
 
@@ -29,9 +30,16 @@ export interface GridSettings {
   cellSize: number;
 }
 
-export interface SessionData {
+export interface Room {
+  id: string;
+  name: string;
   entities: Entity[];
   gridSettings: GridSettings;
+}
+
+export interface SessionData {
+  rooms: Record<string, Room>;
+  activeRoomId: string;
   status: EncounterStatus;
   updatedAt: string;
   showEnemyHpToPlayers?: boolean;

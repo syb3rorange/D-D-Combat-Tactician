@@ -2,7 +2,6 @@
 import React from 'react';
 import { Entity, GridSettings } from '../types';
 import { COLORS } from '../constants';
-// Add missing EyeOff icon to imports
 import { 
   User, 
   BrickWall, 
@@ -24,7 +23,8 @@ import {
   Church,
   Key,
   ShieldAlert,
-  EyeOff
+  EyeOff,
+  ArrowRightCircle
 } from 'lucide-react';
 
 interface GridMapProps {
@@ -61,8 +61,12 @@ const GridMap: React.FC<GridMapProps> = ({
   };
 
   const getTerrainIcon = (entity: Entity) => {
-    const { subtype, isOpen } = entity;
+    const { subtype, isOpen, linkedRoomId } = entity;
     const iconProps = { size: cellSize * 0.6, className: "opacity-80" };
+    
+    // Add visual indicator for doors with links for DM/Architect
+    const showLinkIcon = role === 'dm' && linkedRoomId;
+
     switch(subtype) {
       case 'wall': return <BrickWall {...iconProps} className="text-slate-300 opacity-60" />;
       case 'lava': return <Flame {...iconProps} className="text-orange-200 animate-pulse" />;
@@ -71,7 +75,12 @@ const GridMap: React.FC<GridMapProps> = ({
       case 'rock': return <Mountain {...iconProps} className="text-zinc-400" />;
       case 'grass': return <Leaf {...iconProps} className="text-green-300 opacity-40" />;
       case 'pit': return <CircleDot {...iconProps} className="text-slate-800 scale-150" />;
-      case 'door': return isOpen ? <DoorOpen {...iconProps} className="text-amber-400" /> : <DoorClosed {...iconProps} className="text-amber-200" />;
+      case 'door': return (
+        <div className="relative">
+          {isOpen ? <DoorOpen {...iconProps} className="text-amber-400" /> : <DoorClosed {...iconProps} className="text-amber-200" />}
+          {showLinkIcon && <ArrowRightCircle size={14} className="absolute -top-1 -right-1 text-emerald-400 bg-slate-900 rounded-full" />}
+        </div>
+      );
       case 'chest': return isOpen ? <PackageOpen {...iconProps} className="text-amber-300" /> : <Package {...iconProps} className="text-yellow-400" />;
       case 'trap': return <Skull {...iconProps} className="text-red-400 animate-pulse" />;
       case 'pillar': return <Square {...iconProps} className="text-zinc-300 fill-zinc-700" />;

@@ -162,26 +162,6 @@ const EntityCard: React.FC<EntityCardProps> = ({
         </div>
       )}
 
-      {isKey && role === 'dm' && (
-         <div className="mt-3 space-y-2 p-3 bg-slate-950/60 rounded-xl border border-slate-800">
-            <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] text-slate-500 font-black uppercase">Key Color</span>
-                <input 
-                    type="color" 
-                    value={entity.color} 
-                    onChange={e => onUpdateEntity({...entity, color: e.target.value})}
-                    className="w-10 h-10 rounded-xl bg-transparent border-2 border-slate-700 cursor-pointer overflow-hidden p-0"
-                />
-            </div>
-            <button 
-                onClick={(e) => { e.stopPropagation(); onUpdateEntity({...entity, isVisibleToPlayers: true}); }}
-                className={`w-full py-2.5 rounded-xl text-xs font-black uppercase tracking-widest border transition-all shadow-xl ${entity.isVisibleToPlayers !== false ? 'bg-amber-500 text-white border-amber-400' : 'bg-amber-500/20 text-amber-500 border-amber-500/50 animate-pulse'}`}
-            >
-                {entity.isVisibleToPlayers !== false ? 'KEY REVEALED' : 'REVEAL TO PLAYERS'}
-            </button>
-         </div>
-      )}
-
       {(isClaimed || isEnemy) && !isInteractive && !isKey && (
         <>
           <div className="flex items-center gap-4 mb-3 bg-black/20 p-2 rounded-lg">
@@ -222,7 +202,8 @@ const EntityCard: React.FC<EntityCardProps> = ({
               </button>
               <button 
                 onClick={(e) => { e.stopPropagation(); onUpdateHp(entity.id, entity.hp + 1); }}
-                className="flex items-center justify-center gap-1 py-1.5 bg-slate-800 hover:bg-green-900/30 rounded-lg text-[10px] text-green-400 font-black transition-colors"
+                disabled={entity.hp >= entity.maxHp}
+                className="flex items-center justify-center gap-1 py-1.5 bg-slate-800 hover:bg-green-900/30 rounded-lg text-[10px] text-green-400 font-black transition-colors disabled:opacity-20 disabled:hover:bg-slate-800"
               >
                 <Plus size={12} /> HEAL
               </button>
