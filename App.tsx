@@ -85,7 +85,6 @@ const App: React.FC = () => {
   const entities = currentRoom?.entities || [];
   const gridSettings = currentRoom?.gridSettings || INITIAL_GRID_SETTINGS;
 
-  // 1. Initial Load from Session Storage (Persistence of identity)
   useEffect(() => {
     const saved = sessionStorage.getItem('dnd_active_session');
     if (saved) {
@@ -96,7 +95,6 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // 2. Persist Identity to Session Storage
   useEffect(() => {
     if (role && sessionCode) {
       sessionStorage.setItem('dnd_active_session', JSON.stringify({
@@ -135,7 +133,6 @@ const App: React.FC = () => {
     }
   }, [sessionCode, role]);
 
-  // Real-time listener for multi-tab/multi-window sync
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === `dnd_session_${sessionCode}`) {
@@ -154,7 +151,6 @@ const App: React.FC = () => {
     }
   }, [sessionCode, role, fetchFromCloud]);
 
-  // Sync state to storage whenever it changes (Crucial for persistence)
   useEffect(() => {
     if ((role === 'dm' || role === 'member') && sessionCode && Object.keys(rooms).length > 0) {
       syncToCloud({ 
@@ -399,15 +395,17 @@ const App: React.FC = () => {
             updateCurrentRoom({ entities: nextEntities });
             setSelectedEntityId(null);
             
-            // CROSS-ROOM TRAVEL LOGIC
+            // PARTY TRAVEL LOGIC
             if (found && found.subtype === 'door' && found.linkedRoomId) {
               const targetRoomId = found.linkedRoomId;
               const targetRoom = rooms[targetRoomId];
               const sourceRoomId = activeRoomId;
               
               if (targetRoom) {
-                setNotification(`Traveling to ${targetRoom.name}...`);
-                const heroToTransfer = { ...myHero };
+                setNotification(`Party Traveling to ${targetRoom.name}...`);
+                
+                // Get all party members (all entities of type 'player')
+                const partyToTransfer = entities.filter(e => e.type === 'player');
                 
                 setTimeout(() => {
                   setRooms(prev => {
@@ -415,28 +413,29 @@ const App: React.FC = () => {
                     const target = prev[targetRoomId];
                     if (!source || !target) return prev;
 
-                    // Remove from old room
-                    const cleanedSourceEntities = source.entities.filter(e => e.id !== heroToTransfer.id);
+                    // Remove party from old room
+                    const partyIds = new Set(partyToTransfer.map(p => p.id));
+                    const cleanedSourceEntities = source.entities.filter(e => !partyIds.has(e.id));
                     
-                    // Logic to find placement in the NEW room near the door
-                    // 1. Find the door in the target room that points BACK to the source room
-                    // 2. If not found, find ANY door in the target room
-                    // 3. If no doors, use the center of the room
+                    // Identify exit door in target room to place party members around
                     const partnerDoor = target.entities.find(e => e.subtype === 'door' && e.linkedRoomId === sourceRoomId)
                                      || target.entities.find(e => e.subtype === 'door');
 
-                    const spawnX = partnerDoor ? partnerDoor.x : Math.floor(target.gridSettings.cols / 2);
-                    const spawnY = partnerDoor ? partnerDoor.y : Math.floor(target.gridSettings.rows / 2);
+                    const spawnBaseX = partnerDoor ? partnerDoor.x : Math.floor(target.gridSettings.cols / 2);
+                    const spawnBaseY = partnerDoor ? partnerDoor.y : Math.floor(target.gridSettings.rows / 2);
                     
-                    const spawnPoint = findEmptySquare(spawnX, spawnY, target.entities, target.gridSettings);
-                    const transferredHero = { ...heroToTransfer, x: spawnPoint.x, y: spawnPoint.y };
-                    
-                    const cleanedTargetEntities = target.entities.filter(e => e.id !== heroToTransfer.id);
+                    let currentTargetEntities = [...target.entities.filter(e => !partyIds.has(e.id))];
+                    const transferredParty: Entity[] = [];
+
+                    partyToTransfer.forEach(hero => {
+                      const spawnPoint = findEmptySquare(spawnBaseX, spawnBaseY, [...currentTargetEntities, ...transferredParty], target.gridSettings);
+                      transferredParty.push({ ...hero, x: spawnPoint.x, y: spawnPoint.y });
+                    });
 
                     return {
                       ...prev,
                       [sourceRoomId]: { ...source, entities: cleanedSourceEntities },
-                      [targetRoomId]: { ...target, entities: [...cleanedTargetEntities, transferredHero] }
+                      [targetRoomId]: { ...target, entities: [...currentTargetEntities, ...transferredParty] }
                     };
                   });
                   
@@ -746,7 +745,8 @@ const App: React.FC = () => {
                     onAddLinkedKey={handleAddLinkedKey}
                     canEdit={role === 'dm' || role === 'workshop' || entity.claimedBy === playerName} 
                     role={role === 'dm' || role === 'workshop' ? 'dm' : 'member'} 
-                    showEnemyHpToPlayers={showEnemyHpToPlayers} 
+                    showEnemyHpToPlayers={showEnemyHpToPlayers}
+                    playerName={playerName}
                   />
                 ))}
               </div>

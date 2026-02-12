@@ -18,6 +18,7 @@ interface EntityCardProps {
   showEnemyHpToPlayers: boolean;
   isEditorOpen?: boolean;
   isTutorialStep?: boolean;
+  playerName?: string;
 }
 
 const EntityCard: React.FC<EntityCardProps> = ({ 
@@ -34,17 +35,20 @@ const EntityCard: React.FC<EntityCardProps> = ({
   role,
   showEnemyHpToPlayers,
   isEditorOpen,
-  isTutorialStep
+  isTutorialStep,
+  playerName
 }) => {
   const hpPercent = Math.max(0, Math.min(100, (entity.hp / entity.maxHp) * 100));
   const isPlayerSlot = entity.type === 'player';
   const isClaimed = !!entity.claimedBy;
   const isEnemy = entity.type === 'enemy';
+  const isTeammate = entity.type === 'teammate' || (entity.type === 'player' && isClaimed);
   const isKey = entity.type === 'key';
   const isChest = entity.subtype === 'chest';
   const isDoor = entity.subtype === 'door';
   const isInteractive = isChest || isDoor;
   const shouldHideHp = isEnemy && role === 'member' && !showEnemyHpToPlayers;
+  const isSelf = entity.claimedBy === playerName;
   
   const getHpColor = () => {
     if (hpPercent > 50) return 'bg-green-500';
@@ -65,6 +69,9 @@ const EntityCard: React.FC<EntityCardProps> = ({
 
   if (entity.type === 'obstacle' && !isInteractive) return null;
   if (role === 'member' && entity.isVisibleToPlayers === false) return null;
+
+  // Friendly fire check: Members cannot damage other teammates/players unless it is themselves
+  const canDamage = role === 'dm' || isEnemy || isSelf;
 
   return (
     <div 
@@ -162,7 +169,7 @@ const EntityCard: React.FC<EntityCardProps> = ({
         </div>
       )}
 
-      {(isClaimed || isEnemy) && !isInteractive && !isKey && (
+      {(isClaimed || isEnemy || isTeammate) && !isInteractive && !isKey && (
         <>
           <div className="flex items-center gap-4 mb-3 bg-black/20 p-2 rounded-lg">
             <div className="flex flex-col items-center justify-center min-w-[32px] border-r border-slate-700 pr-2">
@@ -192,23 +199,23 @@ const EntityCard: React.FC<EntityCardProps> = ({
             </div>
           </div>
 
-          {(canEdit || !isEnemy) && (
-            <div className="grid grid-cols-2 gap-2">
-              <button 
-                onClick={(e) => { e.stopPropagation(); onUpdateHp(entity.id, entity.hp - 1); }}
-                className="flex items-center justify-center gap-1 py-1.5 bg-slate-800 hover:bg-red-900/30 rounded-lg text-[10px] text-red-400 font-black transition-colors"
-              >
-                <Minus size={12} /> DAMAGE
-              </button>
-              <button 
-                onClick={(e) => { e.stopPropagation(); onUpdateHp(entity.id, entity.hp + 1); }}
-                disabled={entity.hp >= entity.maxHp}
-                className="flex items-center justify-center gap-1 py-1.5 bg-slate-800 hover:bg-green-900/30 rounded-lg text-[10px] text-green-400 font-black transition-colors disabled:opacity-20 disabled:hover:bg-slate-800"
-              >
-                <Plus size={12} /> HEAL
-              </button>
-            </div>
-          )}
+          <div className="grid grid-cols-2 gap-2">
+            <button 
+              disabled={!canDamage}
+              onClick={(e) => { e.stopPropagation(); onUpdateHp(entity.id, entity.hp - 1); }}
+              className={`flex items-center justify-center gap-1 py-1.5 bg-slate-800 rounded-lg text-[10px] font-black transition-colors ${canDamage ? 'hover:bg-red-900/30 text-red-400' : 'opacity-20 text-slate-500 cursor-not-allowed'}`}
+              title={!canDamage ? "Friendly fire is disabled" : "Apply Damage"}
+            >
+              <Minus size={12} /> DAMAGE
+            </button>
+            <button 
+              onClick={(e) => { e.stopPropagation(); onUpdateHp(entity.id, entity.hp + 1); }}
+              disabled={entity.hp >= entity.maxHp}
+              className="flex items-center justify-center gap-1 py-1.5 bg-slate-800 hover:bg-green-900/30 rounded-lg text-[10px] text-green-400 font-black transition-colors disabled:opacity-20 disabled:hover:bg-slate-800"
+            >
+              <Plus size={12} /> HEAL
+            </button>
+          </div>
         </>
       )}
     </div>
