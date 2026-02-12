@@ -128,7 +128,6 @@ const App: React.FC = () => {
     const rawData = localStorage.getItem(storageKey);
     if (rawData) {
       const data: SessionData = JSON.parse(rawData);
-      // Only update if data is newer or local state is empty
       setRooms(data.rooms || {});
       setActiveRoomId(data.activeRoomId);
       setEncounterStatus(data.status);
@@ -380,16 +379,13 @@ const App: React.FC = () => {
         setSelectedEntityId(found.id);
       }
     } else {
-      // Identity check using the persistent playerName state
       const myHero = entities.find(e => e.claimedBy === playerName);
       
-      // If user hasn't claimed a slot and clicks an empty one
       if (found && found.type === 'player' && !found.claimedBy && !myHero) {
         setPendingClaimId(found.id);
         return;
       }
 
-      // Movement logic
       if (selectedEntityId && myHero && selectedEntityId === myHero.id) {
          const isTraversable = !found || found.type === 'key' || (found.type === 'obstacle' && found.isOpen);
          if (isTraversable) {
@@ -407,33 +403,39 @@ const App: React.FC = () => {
             if (found && found.subtype === 'door' && found.linkedRoomId) {
               const targetRoomId = found.linkedRoomId;
               const targetRoom = rooms[targetRoomId];
+              const sourceRoomId = activeRoomId;
               
               if (targetRoom) {
                 setNotification(`Traveling to ${targetRoom.name}...`);
-                const heroToTransfer = { ...myHero, x: x, y: y }; // Temporary until moved
+                const heroToTransfer = { ...myHero };
                 
                 setTimeout(() => {
                   setRooms(prev => {
-                    const source = prev[activeRoomId];
+                    const source = prev[sourceRoomId];
                     const target = prev[targetRoomId];
                     if (!source || !target) return prev;
 
                     // Remove from old room
                     const cleanedSourceEntities = source.entities.filter(e => e.id !== heroToTransfer.id);
                     
-                    // Add to new room at a spawn point (center)
-                    const spawnX = Math.floor(target.gridSettings.cols / 2);
-                    const spawnY = Math.floor(target.gridSettings.rows / 2);
-                    const spawnPoint = findEmptySquare(spawnX, spawnY, target.entities, target.gridSettings);
+                    // Logic to find placement in the NEW room near the door
+                    // 1. Find the door in the target room that points BACK to the source room
+                    // 2. If not found, find ANY door in the target room
+                    // 3. If no doors, use the center of the room
+                    const partnerDoor = target.entities.find(e => e.subtype === 'door' && e.linkedRoomId === sourceRoomId)
+                                     || target.entities.find(e => e.subtype === 'door');
+
+                    const spawnX = partnerDoor ? partnerDoor.x : Math.floor(target.gridSettings.cols / 2);
+                    const spawnY = partnerDoor ? partnerDoor.y : Math.floor(target.gridSettings.rows / 2);
                     
+                    const spawnPoint = findEmptySquare(spawnX, spawnY, target.entities, target.gridSettings);
                     const transferredHero = { ...heroToTransfer, x: spawnPoint.x, y: spawnPoint.y };
                     
-                    // Filter just in case they were already there
                     const cleanedTargetEntities = target.entities.filter(e => e.id !== heroToTransfer.id);
 
                     return {
                       ...prev,
-                      [activeRoomId]: { ...source, entities: cleanedSourceEntities },
+                      [sourceRoomId]: { ...source, entities: cleanedSourceEntities },
                       [targetRoomId]: { ...target, entities: [...cleanedTargetEntities, transferredHero] }
                     };
                   });
@@ -447,7 +449,6 @@ const App: React.FC = () => {
          }
       }
       
-      // Selection logic for Heroes
       if (found && (found.claimedBy === playerName || found.type === 'enemy' || found.subtype === 'chest' || found.subtype === 'door' || found.type === 'key')) {
         setSelectedEntityId(found.id);
       } else if (selectedEntityId && myHero && selectedEntityId === myHero.id) {
