@@ -783,6 +783,7 @@ const App: React.FC = () => {
                   role={role === 'dm' || role === 'workshop' ? 'dm' : 'member'} 
                   showEnemyHpToPlayers={showEnemyHpToPlayers} 
                   isEditorOpen={isFieldEditorOpen} 
+                  localPlayerName={playerName}
                />
              </div>
            ) : (

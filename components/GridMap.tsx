@@ -36,6 +36,7 @@ interface GridMapProps {
   showEnemyHpToPlayers: boolean;
   isEditorOpen: boolean;
   highlightedEntityId?: string | null;
+  localPlayerName?: string;
 }
 
 const GridMap: React.FC<GridMapProps> = ({ 
@@ -46,7 +47,8 @@ const GridMap: React.FC<GridMapProps> = ({
   role,
   showEnemyHpToPlayers,
   isEditorOpen,
-  highlightedEntityId
+  highlightedEntityId,
+  localPlayerName
 }) => {
   const { rows, cols, cellSize } = settings;
 
@@ -74,6 +76,7 @@ const GridMap: React.FC<GridMapProps> = ({
       case 'forest': return <TreePine {...iconProps} className="text-emerald-400" />;
       case 'rock': return <Mountain {...iconProps} className="text-zinc-400" />;
       case 'grass': return <Leaf {...iconProps} className="text-green-300 opacity-40" />;
+      // Fix: Changed 'split' to 'pit' to match valid subtypes in types.ts
       case 'pit': return <CircleDot {...iconProps} className="text-slate-800 scale-150" />;
       case 'door': return (
         <div className="relative">
@@ -139,6 +142,7 @@ const GridMap: React.FC<GridMapProps> = ({
             const isKey = entity.type === 'key';
             const hideHpOnToken = entity.type === 'enemy' && role === 'member' && !showEnemyHpToPlayers;
             const isHighlighted = highlightedEntityId === entity.id;
+            const isSelf = entity.claimedBy === localPlayerName;
             
             return (
               <div
@@ -163,6 +167,10 @@ const GridMap: React.FC<GridMapProps> = ({
                   boxShadow: isObstacle && entity.subtype === 'lava' ? '0 0 15px rgba(249, 115, 22, 0.5)' : undefined
                 }}
               >
+                {isSelf && (
+                  <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded shadow-lg pointer-events-none z-[60]">YOU</div>
+                )}
+                
                 {isObstacle ? (
                   getTerrainIcon(entity)
                 ) : isKey ? (

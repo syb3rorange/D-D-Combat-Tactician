@@ -89,7 +89,7 @@ const EntityCard: React.FC<EntityCardProps> = ({
       <div className="flex justify-between items-start mb-3">
         <div className="space-y-1">
           <h3 className="font-bold text-base text-white truncate w-40 flex items-center gap-2">
-            {entity.name}
+            {entity.name} {isSelf && <span className="text-amber-500 text-[10px] font-black uppercase tracking-tighter">(You)</span>}
             {isClaimed && <UserCircle size={14} className="text-blue-400" />}
             {isInteractive && (entity.isLocked ? <Lock size={14} className="text-red-500" /> : (entity.isOpen ? <Unlock size={14} className="text-amber-400" /> : <Lock size={14} className="text-slate-500" />))}
             {isKey && <Key size={14} className="text-yellow-400" />}
