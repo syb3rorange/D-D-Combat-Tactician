@@ -50,7 +50,8 @@ import {
   ArrowRightCircle,
   Edit2,
   Check,
-  Archive
+  Archive,
+  Compass
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -66,6 +67,7 @@ const App: React.FC = () => {
   const [notification, setNotification] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
+  const [isTransitioning, setIsTransitioning] = useState(false);
   
   const [rooms, setRooms] = useState<Record<string, Room>>({});
   const [activeRoomId, setActiveRoomId] = useState<string>('');
@@ -121,7 +123,8 @@ const App: React.FC = () => {
   }, [sessionCode, role]);
 
   const fetchFromCloud = useCallback(() => {
-    if (!sessionCode || role === 'workshop') return;
+    // Prevent fetching while transitioning to avoid data race
+    if (!sessionCode || role === 'workshop' || isTransitioning) return;
     const storageKey = `dnd_session_${sessionCode}`;
     const rawData = localStorage.getItem(storageKey);
     if (rawData) {
@@ -131,7 +134,7 @@ const App: React.FC = () => {
       setEncounterStatus(data.status);
       setShowEnemyHpToPlayers(data.showEnemyHpToPlayers ?? true);
     }
-  }, [sessionCode, role]);
+  }, [sessionCode, role, isTransitioning]);
 
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
@@ -152,7 +155,7 @@ const App: React.FC = () => {
   }, [sessionCode, role, fetchFromCloud]);
 
   useEffect(() => {
-    if ((role === 'dm' || role === 'member') && sessionCode && Object.keys(rooms).length > 0) {
+    if ((role === 'dm' || role === 'member') && sessionCode && Object.keys(rooms).length > 0 && !isTransitioning) {
       syncToCloud({ 
         rooms, 
         activeRoomId, 
@@ -160,7 +163,7 @@ const App: React.FC = () => {
         showEnemyHpToPlayers 
       });
     }
-  }, [rooms, activeRoomId, encounterStatus, role, sessionCode, syncToCloud, showEnemyHpToPlayers]);
+  }, [rooms, activeRoomId, encounterStatus, role, sessionCode, syncToCloud, showEnemyHpToPlayers, isTransitioning]);
 
   const fitToScreen = useCallback(() => {
     if (!containerRef.current || !currentRoom) return;
@@ -333,7 +336,7 @@ const App: React.FC = () => {
   };
 
   const handleCellClick = useCallback((x: number, y: number) => {
-    if (!currentRoom) return;
+    if (!currentRoom || isTransitioning) return;
     const found = entities.find(e => e.x === x && e.y === y);
     if (role === 'dm' || role === 'workshop') {
       if (isFieldEditorOpen) {
@@ -402,12 +405,14 @@ const App: React.FC = () => {
               const sourceRoomId = activeRoomId;
               
               if (targetRoom) {
+                setIsTransitioning(true);
                 setNotification(`Party Traveling to ${targetRoom.name}...`);
                 
                 // Get all party members (all entities of type 'player')
                 const partyToTransfer = entities.filter(e => e.type === 'player');
                 
                 setTimeout(() => {
+                  let updatedRooms: Record<string, Room> = {};
                   setRooms(prev => {
                     const source = prev[sourceRoomId];
                     const target = prev[targetRoomId];
@@ -432,15 +437,31 @@ const App: React.FC = () => {
                       transferredParty.push({ ...hero, x: spawnPoint.x, y: spawnPoint.y });
                     });
 
-                    return {
+                    updatedRooms = {
                       ...prev,
                       [sourceRoomId]: { ...source, entities: cleanedSourceEntities },
                       [targetRoomId]: { ...target, entities: [...currentTargetEntities, ...transferredParty] }
                     };
+                    return updatedRooms;
                   });
                   
                   setActiveRoomId(targetRoomId);
-                  setNotification(null);
+                  
+                  // Atomic sync to prevent fetch race
+                  // Fix: narrowed check for role within else block where role can only be 'member' or null
+                  if (role === 'member') {
+                     syncToCloud({ 
+                        rooms: updatedRooms, 
+                        activeRoomId: targetRoomId, 
+                        status: encounterStatus, 
+                        showEnemyHpToPlayers 
+                      });
+                  }
+                  
+                  setTimeout(() => {
+                    setIsTransitioning(false);
+                    setNotification(null);
+                  }, 400); // Give React a beat to render before revealing
                 }, 800);
               }
             }
@@ -454,7 +475,7 @@ const App: React.FC = () => {
         setSelectedEntityId(null);
       }
     }
-  }, [selectedEntityId, entities, role, playerName, placementMode, isFieldEditorOpen, activeRoomId, rooms, currentRoom, findEmptySquare]);
+  }, [selectedEntityId, entities, role, playerName, placementMode, isFieldEditorOpen, activeRoomId, rooms, currentRoom, findEmptySquare, isTransitioning, syncToCloud, encounterStatus, showEnemyHpToPlayers]);
 
   const addEntity = (type: EntityType) => {
     if (!currentRoom) return;
@@ -772,7 +793,25 @@ const App: React.FC = () => {
              </div>
            </div>
         </header>
-        <div className="flex-1 overflow-auto bg-slate-950 relative flex items-center justify-center custom-scrollbar">
+
+        {isTransitioning && (
+          <div className="absolute inset-0 z-[500] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center space-y-6 transition-all duration-300 animate-in fade-in">
+             <div className="relative">
+                <Compass size={80} className="text-amber-500 animate-[spin_3s_linear_infinite]" />
+                <div className="absolute inset-0 bg-amber-500/20 blur-2xl animate-pulse rounded-full" />
+             </div>
+             <div className="flex flex-col items-center">
+                <h2 className="font-medieval text-4xl text-white mb-2">Changing Realms</h2>
+                <div className="flex gap-1">
+                   <div className="w-2 h-2 bg-amber-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                   <div className="w-2 h-2 bg-amber-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                   <div className="w-2 h-2 bg-amber-500 rounded-full animate-bounce" />
+                </div>
+             </div>
+          </div>
+        )}
+
+        <div className={`flex-1 overflow-auto bg-slate-950 relative flex items-center justify-center custom-scrollbar transition-opacity duration-300 ${isTransitioning ? 'opacity-0' : 'opacity-100'}`}>
            {currentRoom ? (
              <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }} className="transition-transform duration-300">
                <GridMap 
