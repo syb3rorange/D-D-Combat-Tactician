@@ -156,11 +156,9 @@ const App: React.FC = () => {
       if (tutorialStep === 7 && entities.some(e => e.type === 'player')) setTutorialStep(8);
       if (tutorialStep === 8 && entities.some(e => e.type === 'enemy')) setTutorialStep(9);
     } else {
-      // Hero Tutorial Steps
       const myChar = entities.find(e => e.claimedBy === playerName);
       if (tutorialStep === 0 && myChar) setTutorialStep(1);
       if (tutorialStep === 1 && myChar && (myChar.x === 6 && myChar.y === 7)) setTutorialStep(2);
-      // Logic for picking up key automatically finishes step 1, but we need step 2 for interaction
       if (tutorialStep === 2 && selectedEntityId === 'tut-door-1') setTutorialStep(3);
       if (tutorialStep === 3 && myChar && (myChar.x === 7 && myChar.y === 6)) setTutorialStep(4);
       if (tutorialStep === 4 && entities.find(e => e.id === 'tut-door-1')?.isOpen) setTutorialStep(5);
@@ -211,10 +209,8 @@ const App: React.FC = () => {
         setSelectedEntityId(found.id);
       }
     } else {
-      // Player branch
       const myHero = entities.find(e => e.claimedBy === playerName);
       
-      // PRIORITY 1: Claim empty slots
       if (found && found.type === 'player' && !found.claimedBy) {
         const updated = entities.map(e => e.id === found.id ? { ...e, claimedBy: playerName, name: playerName } : e);
         setEntities(updated);
@@ -222,12 +218,9 @@ const App: React.FC = () => {
         return;
       }
 
-      // PRIORITY 2: Movement if hero is selected
       if (selectedEntityId && myHero && selectedEntityId === myHero.id) {
-         // If clicking a traversable thing or empty space
          const isTraversable = !found || found.type === 'key' || (found.type === 'obstacle' && found.isOpen);
          if (isTraversable) {
-            // "Pick up" logic for keys
             let nextEntities = entities.map(e => e.id === selectedEntityId ? { ...e, x, y } : e);
             if (found && found.type === 'key') {
                 setNotification(`You collected the ${found.name}!`);
@@ -240,11 +233,9 @@ const App: React.FC = () => {
          }
       }
 
-      // PRIORITY 3: Selection (if didn't move)
       if (found && (found.claimedBy === playerName || found.type === 'enemy' || found.subtype === 'chest' || found.subtype === 'door' || found.type === 'key')) {
         setSelectedEntityId(found.id);
       } else if (selectedEntityId && myHero && selectedEntityId === myHero.id) {
-        // Deselect if clicking empty ground and already there? 
         setSelectedEntityId(null);
       }
     }
@@ -306,57 +297,33 @@ const App: React.FC = () => {
   };
 
   const handleDeleteEntity = (id: string) => {
-    if (role !== 'dm') return; // REDO: Extra safety check
+    if (role !== 'dm') return;
     setEntities(prev => prev.filter(e => e.id !== id));
     if (selectedEntityId === id) setSelectedEntityId(null);
   };
 
-  if (!role) return <RoleSelection onSelectDM={() => { setSessionCode(generateCode()); setRole('dm'); setIsTutorial(false); }} onJoin={(c, n) => { setSessionCode(c.toUpperCase()); setPlayerName(n); setRole('member'); setIsTutorial(false); }} onTutorial={(t) => {
-    setIsTutorial(true); 
-    setTutorialStep(0); 
-    setRole(t); 
-    setSessionCode('TUTOR'); 
-    setGridSettings(INITIAL_GRID_SETTINGS);
-    setIsSidebarOpen(true);
-    
-    if (t === 'member') {
-      setPlayerName('Tutorial Hero');
-      setEntities([
-        {
-          id: 'tut-slot-1',
-          name: 'Hero Slot',
-          type: 'player',
-          hp: 20, maxHp: 20, ac: 15, initiative: 10,
-          x: 7, y: 7, color: COLORS.player,
-          isVisibleToPlayers: true
-        },
-        {
-          id: 'tut-key-1',
-          name: 'Shiny Key',
-          type: 'key',
-          hp: 1, maxHp: 1, ac: 0, initiative: 0,
-          x: 6, y: 7, color: '#facc15',
-          isVisibleToPlayers: true
-        },
-        {
-          id: 'tut-door-1',
-          name: 'Locked Gate',
-          type: 'obstacle',
-          subtype: 'door',
-          hp: 1, maxHp: 1, ac: 0, initiative: 0,
-          x: 7, y: 6, color: COLORS.door,
-          isOpen: false,
-          isLocked: false,
-          isVisibleToPlayers: true
+  if (!role) return (
+    <RoleSelection 
+      onSelectDM={() => { setSessionCode(generateCode()); setRole('dm'); setIsTutorial(false); setPlayerName('The Dungeon Master'); }} 
+      onJoin={(c, n) => { setSessionCode(c.toUpperCase()); setPlayerName(n); setRole('member'); setIsTutorial(false); }} 
+      onTutorial={(t) => {
+        setIsTutorial(true); 
+        setTutorialStep(0); 
+        setRole(t); 
+        setSessionCode('TUTOR'); 
+        setGridSettings(INITIAL_GRID_SETTINGS);
+        setIsSidebarOpen(true);
+        if (t === 'member') {
+          setPlayerName('Tutorial Hero');
+          setEntities([{ id: 'tut-slot-1', name: 'Hero Slot', type: 'player', hp: 20, maxHp: 20, ac: 15, initiative: 10, x: 7, y: 7, color: COLORS.player, isVisibleToPlayers: true }, { id: 'tut-key-1', name: 'Shiny Key', type: 'key', hp: 1, maxHp: 1, ac: 0, initiative: 0, x: 6, y: 7, color: '#facc15', isVisibleToPlayers: true }, { id: 'tut-door-1', name: 'Locked Gate', type: 'obstacle', subtype: 'door', hp: 1, maxHp: 1, ac: 0, initiative: 0, x: 7, y: 6, color: COLORS.door, isOpen: false, isLocked: false, isVisibleToPlayers: true }]);
+        } else {
+          setPlayerName('Tutorial DM');
+          setEntities([]);
         }
-      ]);
-    } else {
-      setPlayerName('');
-      setEntities([]);
-    }
-  }} />;
+      }} 
+    />
+  );
 
-  const myCharacterId = entities.find(e => e.claimedBy === playerName)?.id;
   const filteredEntities = entities.filter(e => e.type !== 'obstacle' || (e.subtype === 'chest' || e.subtype === 'door'));
   const selectedEntity = entities.find(e => e.id === selectedEntityId);
 
@@ -375,7 +342,7 @@ const App: React.FC = () => {
       {role === 'dm' && (
         <>
           <div className={`fixed left-0 top-1/2 -translate-y-1/2 z-[60] flex items-center transition-all duration-300 ${isFieldEditorOpen ? 'translate-x-[22rem]' : 'translate-x-0'}`}>
-            <button id="field-editor-toggle" onClick={() => setIsFieldEditorOpen(!isFieldEditorOpen)} className={`bg-amber-600 p-2 rounded-r-xl shadow-2xl border-y border-r border-amber-500 hover:bg-amber-500 transition-colors ${(tutorialStep === 0 || tutorialStep === 6) && isTutorial ? 'animate-pulse scale-110 ring-4 ring-white' : ''}`}>
+            <button onClick={() => setIsFieldEditorOpen(!isFieldEditorOpen)} className={`bg-amber-600 p-2 rounded-r-xl shadow-2xl border-y border-r border-amber-500 hover:bg-amber-500 transition-colors ${(tutorialStep === 0 || tutorialStep === 6) && isTutorial ? 'animate-pulse scale-110 ring-4 ring-white' : ''}`}>
               {isFieldEditorOpen ? <ChevronLeft size={20} className="text-white" /> : <ChevronRight size={20} className="text-white" />}
             </button>
           </div>
@@ -417,15 +384,6 @@ const App: React.FC = () => {
                          <Link size={18} /> FORGE LINKED KEY
                        </button>
                      )}
-                     {selectedEntity.linkedEntityId && (
-                        <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/30 flex items-center justify-between">
-                           <div className="flex items-center gap-2">
-                              <Key size={14} className="text-amber-500" />
-                              <span className="text-[10px] font-black text-amber-500 uppercase">Key Linked</span>
-                           </div>
-                           <div className="w-4 h-4 rounded-full border border-white/20" style={{ backgroundColor: selectedEntity.color }}></div>
-                        </div>
-                     )}
                   </div>
                   <button onClick={() => setSelectedEntityId(null)} className="w-full py-2 text-slate-500 text-[10px] font-black uppercase hover:text-slate-300">Back to Brushes</button>
                 </div>
@@ -457,15 +415,15 @@ const App: React.FC = () => {
         {isSidebarOpen && (
           <div className="flex flex-col h-full overflow-hidden">
             <div className="p-6 border-b-2 border-slate-800 flex justify-between items-center">
-                <h1 className="font-medieval text-2xl text-amber-500 flex items-center gap-3 truncate"><Sword size={24} /> {isTutorial ? 'Tutorial' : role}</h1>
-                <button onClick={() => setRole(null)} className="text-slate-500"><LogOut size={18} /></button>
+                <h1 className="font-medieval text-xl text-amber-500 flex items-center gap-3 truncate"><Sword size={24} /> {isTutorial ? 'Tutorial' : (role === 'dm' ? 'Dungeon Master' : 'The Hero')}</h1>
+                <button onClick={() => setRole(null)} className="text-slate-500 hover:text-red-500 transition-colors"><LogOut size={18} /></button>
             </div>
             <div className="flex-1 overflow-y-auto p-5 space-y-6">
               {role === 'dm' && (
                 <div className="space-y-3">
                   <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Summon</h3>
                   <div className="grid grid-cols-2 gap-2">
-                    <button onClick={() => addEntity('player')} className={`p-3 bg-green-600/20 border border-green-600/50 rounded-xl text-green-400 text-xs font-black ${tutorialStep === 8 && isTutorial ? 'animate-pulse ring-4 ring-white' : ''}`}>PLAYER</button>
+                    <button onClick={() => addEntity('player')} className={`p-3 bg-green-600/20 border border-green-600/50 rounded-xl text-green-400 text-xs font-black ${tutorialStep === 8 && isTutorial ? 'animate-pulse ring-4 ring-white' : ''}`}>PLAYER SLOT</button>
                     <button onClick={() => addEntity('enemy')} className={`p-3 bg-red-600/20 border border-red-600/50 rounded-xl text-red-400 text-xs font-black ${tutorialStep === 9 && isTutorial ? 'animate-pulse ring-4 ring-white' : ''}`}>ENEMY</button>
                   </div>
                 </div>
@@ -500,8 +458,11 @@ const App: React.FC = () => {
       <main className="flex-1 flex flex-col relative" ref={containerRef}>
         <header className="p-4 border-b border-slate-800 bg-slate-900 flex justify-between items-center z-20">
            <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 text-slate-400"><ChevronLeft size={20}/></button>
-           {placementMode && isFieldEditorOpen && (
-             <div className="bg-amber-600/20 text-amber-500 px-4 py-1 rounded-full border border-amber-600/50 text-[10px] font-black uppercase tracking-widest animate-pulse">Brush: {placementMode}</div>
+           {!isTutorial && (
+             <div className="flex flex-col items-center">
+               <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Session Code</span>
+               <span className="text-xl font-medieval text-white tracking-[0.2em]">{sessionCode}</span>
+             </div>
            )}
            <div className="flex gap-2"><ZoomOut size={16} className="cursor-pointer" onClick={() => setZoom(z => Math.max(0.2, z - 0.1))} /><ZoomIn size={16} className="cursor-pointer" onClick={() => setZoom(z => Math.min(1.5, z + 0.1))} /><Maximize size={16} className="cursor-pointer" onClick={fitToScreen} /></div>
         </header>

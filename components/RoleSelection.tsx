@@ -16,7 +16,7 @@ const GuideModal: React.FC<{ isOpen: boolean; onClose: () => void; onStartTutori
     {
       title: "Master of the Field",
       icon: <Settings2 className="text-amber-500" size={40} />,
-      desc: "As a DM, you control the 'Field Editor' on the left. Click the arrow tab to open it. You can paint terrain, set grid size, and toggle enemy HP visibility.",
+      desc: "As a Dungeon Master, you control the 'Field Editor' on the left. Click the arrow tab to open it. You can paint terrain, set grid size, and toggle enemy HP visibility.",
       tip: "Use the 'Eraser' tool in the Field Editor to remove unwanted tiles."
     },
     {
@@ -43,7 +43,7 @@ const GuideModal: React.FC<{ isOpen: boolean; onClose: () => void; onStartTutori
     {
       title: "Enter the Realm",
       icon: <Users className="text-blue-500" size={40} />,
-      desc: "Enter your character name and the 6-digit code provided by your DM. Once inside, look for a green 'Player Slot' on the grid.",
+      desc: "Enter your character name and the 6-digit code provided by your Dungeon Master. Once inside, look for a green 'Player Slot' on the grid.",
       tip: "Make sure your name matches your character for the best experience!"
     },
     {
@@ -168,12 +168,17 @@ const RoleSelection: React.FC<RoleSelectionProps> = ({ onSelectDM, onJoin, onTut
   const [isJoining, setIsJoining] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
 
+  const handleJoin = () => {
+    if (joinCode && playerName) {
+      onJoin(joinCode.toUpperCase(), playerName);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 relative overflow-hidden">
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-600/10 rounded-full blur-[120px]" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-amber-600/10 rounded-full blur-[120px]" />
 
-      {/* Help Button */}
       <div className="absolute top-8 right-8 z-20">
         <button 
           onClick={() => setIsGuideOpen(true)}
@@ -222,7 +227,7 @@ const RoleSelection: React.FC<RoleSelectionProps> = ({ onSelectDM, onJoin, onTut
                 onClick={() => onTutorial('dm')}
                 className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-indigo-400 font-black rounded-xl text-[10px] uppercase tracking-[0.2em] border border-slate-700 flex items-center justify-center gap-2"
               >
-                <Sparkles size={14} /> Interactive Tutorial
+                <Sparkles size={14} /> DM Interactive Tutorial
               </button>
             </div>
           </div>
@@ -248,7 +253,7 @@ const RoleSelection: React.FC<RoleSelectionProps> = ({ onSelectDM, onJoin, onTut
                   onClick={() => onTutorial('member')}
                   className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-indigo-400 font-black rounded-xl text-[10px] uppercase tracking-[0.2em] border border-slate-700 flex items-center justify-center gap-2"
                 >
-                  <Sparkles size={14} /> Interactive Tutorial
+                  <Sparkles size={14} /> Hero Interactive Tutorial
                 </button>
               </div>
             ) : (
@@ -267,7 +272,7 @@ const RoleSelection: React.FC<RoleSelectionProps> = ({ onSelectDM, onJoin, onTut
                   <button onClick={() => setIsJoining(false)} className="flex-1 py-4 text-slate-500 font-bold text-xs uppercase">BACK</button>
                   <button 
                     disabled={!joinCode || !playerName}
-                    onClick={() => onJoin(joinCode, playerName)}
+                    onClick={handleJoin}
                     className="flex-[2] py-4 bg-blue-600 text-white font-black rounded-xl uppercase tracking-widest disabled:opacity-30"
                   >
                     ENTER
