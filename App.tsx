@@ -13,9 +13,6 @@ import {
   Sword,
   Shield,
   LogOut,
-  Maximize,
-  ZoomIn,
-  ZoomOut,
   Settings2,
   Map as MapIcon,
   AlertTriangle,
@@ -25,13 +22,12 @@ import {
   Hammer,
   Plus,
   Trash2,
-  Box,
-  Copy,
   CheckCircle2,
   Sparkles,
   Search,
-  Link as LinkIcon,
-  Share2
+  Share2,
+  ZoomIn,
+  ZoomOut
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -70,6 +66,7 @@ const App: React.FC = () => {
   const entities = currentRoom?.entities || [];
   const gridSettings = currentRoom?.gridSettings || INITIAL_GRID_SETTINGS;
 
+  // Handle URL Session and Data Injection
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlSession = params.get('session');
@@ -95,18 +92,10 @@ const App: React.FC = () => {
     }
   }, [sessionCode]);
 
-  useEffect(() => {
-    if (sessionCode && role) {
-      const url = new URL(window.location.href);
-      url.searchParams.set('session', sessionCode);
-      window.history.replaceState({}, '', url.toString());
-      sessionStorage.setItem('dnd_active_session', JSON.stringify({ role, playerName, sessionCode }));
-    }
-  }, [sessionCode, role, playerName]);
-
-  const syncToCloud = useCallback((data: Partial<SessionData>) => {
-    if (!sessionCode || role === 'workshop') return;
-    const storageKey = `dnd_session_${sessionCode}`;
+  const syncToCloud = useCallback((data: Partial<SessionData>, explicitCode?: string) => {
+    const code = explicitCode || sessionCode;
+    if (!code || role === 'workshop') return;
+    const storageKey = `dnd_session_${code}`;
     const timestamp = new Date().toISOString();
     
     try {
@@ -132,7 +121,9 @@ const App: React.FC = () => {
       try {
         const data: SessionData = JSON.parse(rawData);
         setSessionExists(true);
-        if (!lastUpdateRef.current || data.updatedAt > lastUpdateRef.current) {
+        // FORCE update if local state is empty OR if remote data is newer
+        const isCurrentlyEmpty = Object.keys(rooms).length === 0;
+        if (isCurrentlyEmpty || !lastUpdateRef.current || data.updatedAt > lastUpdateRef.current) {
           lastUpdateRef.current = data.updatedAt;
           setRooms(data.rooms || {});
           setActiveRoomId(data.activeRoomId);
@@ -142,15 +133,16 @@ const App: React.FC = () => {
       } catch (e) {
         console.error("Fetch failure", e);
       }
-    } else if (role === 'member' && !activeRoomId) {
+    } else if (role === 'member') {
+      // If we are a member and nothing is found yet, indicate searching
       setSessionExists(false);
     }
-  }, [sessionCode, role, activeRoomId]);
+  }, [sessionCode, role, rooms]);
 
   useEffect(() => {
     if (sessionCode && role !== 'workshop') {
-      fetchFromCloud();
-      const interval = setInterval(fetchFromCloud, 2500); 
+      fetchFromCloud(); // Initial attempt
+      const interval = setInterval(fetchFromCloud, 2000); // More frequent polling
       const handleStorageChange = (e: StorageEvent) => {
         if (e.key === `dnd_session_${sessionCode}`) fetchFromCloud();
       };
@@ -162,12 +154,37 @@ const App: React.FC = () => {
     }
   }, [sessionCode, role, fetchFromCloud]);
 
+  // Auto-sync DM changes
   useEffect(() => {
     const isDM = role === 'dm';
     if (isDM && sessionCode && Object.keys(rooms || {}).length > 0) {
       syncToCloud({ rooms, activeRoomId, status: encounterStatus, showEnemyHpToPlayers });
     }
   }, [rooms, activeRoomId, encounterStatus, role, sessionCode, syncToCloud, showEnemyHpToPlayers]);
+
+  const startHosting = () => {
+    const code = generateCode();
+    const firstId = generateId();
+    const initialRooms = { [firstId]: { id: firstId, name: 'The Entrance', entities: [], gridSettings: { ...INITIAL_GRID_SETTINGS } } };
+    
+    // Explicitly sync to cloud immediately so it's ready for joiners
+    const timestamp = new Date().toISOString();
+    const initialSession: SessionData = {
+      rooms: initialRooms,
+      activeRoomId: firstId,
+      status: 'active',
+      updatedAt: timestamp,
+      showEnemyHpToPlayers: true
+    };
+    
+    localStorage.setItem(`dnd_session_${code}`, JSON.stringify(initialSession));
+    
+    setRooms(initialRooms);
+    setActiveRoomId(firstId);
+    setSessionCode(code);
+    setPlayerName('The Dungeon Master');
+    setRole('dm');
+  };
 
   const handleUpdateHp = useCallback((id: string, hp: number) => {
     setRooms(prev => {
@@ -211,21 +228,6 @@ const App: React.FC = () => {
     });
     if (selectedEntityId === id) setSelectedEntityId(null);
   }, [activeRoomId, selectedEntityId]);
-
-  const generateMagicLink = () => {
-    try {
-      const data = { rooms, activeRoomId, status: encounterStatus };
-      const encoded = btoa(JSON.stringify(data));
-      const url = new URL(window.location.href);
-      url.searchParams.set('session', sessionCode);
-      url.searchParams.set('data', encoded);
-      navigator.clipboard.writeText(url.toString());
-      setNotification("Magic Portal Link Copied!");
-      setTimeout(() => setNotification(null), 3000);
-    } catch (e) {
-      setNotification("Linking Failed.");
-    }
-  };
 
   const createRoom = (name: string, data?: Room) => {
     const id = data?.id || generateId();
@@ -359,29 +361,50 @@ const App: React.FC = () => {
     setShowLogoutConfirm(false);
   };
 
-  const startHosting = () => {
-    const code = generateCode();
-    const firstId = generateId();
-    const initialRooms = { [firstId]: { id: firstId, name: 'The Entrance', entities: [], gridSettings: { ...INITIAL_GRID_SETTINGS } } };
-    
-    // Crucial: Set all states needed for the main view before switching role
-    setRooms(initialRooms);
-    setActiveRoomId(firstId);
-    setSessionCode(code);
-    setPlayerName('The Dungeon Master');
-    // Role switch must be last to ensure re-render has the context it needs
-    setRole('dm');
-  };
-
   const startWorkshop = () => {
     const firstId = generateId();
     const initialRooms = { [firstId]: { id: firstId, name: 'Main Blueprint', entities: [], gridSettings: { ...INITIAL_GRID_SETTINGS } } };
-    
     setRooms(initialRooms);
     setActiveRoomId(firstId);
     setSessionCode('WORKSHOP');
     setPlayerName('Architect');
     setRole('workshop');
+  };
+
+  // Implement the missing generateMagicLink function
+  const generateMagicLink = () => {
+    if (!sessionCode) return;
+    
+    const data: SessionData = {
+      rooms,
+      activeRoomId,
+      status: encounterStatus,
+      updatedAt: new Date().toISOString(),
+      showEnemyHpToPlayers
+    };
+    
+    try {
+      const jsonStr = JSON.stringify(data);
+      // Construct a URL safe base64 string
+      const base64Data = btoa(jsonStr).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      
+      const url = new URL(window.location.origin + window.location.pathname);
+      url.searchParams.set('session', sessionCode);
+      url.searchParams.set('data', base64Data);
+      
+      navigator.clipboard.writeText(url.toString()).then(() => {
+        setNotification("Magic Link Copied to Clipboard!");
+        setTimeout(() => setNotification(null), 3000);
+      }).catch(err => {
+        console.error("Failed to copy link: ", err);
+        setNotification("Failed to copy link to clipboard.");
+        setTimeout(() => setNotification(null), 3000);
+      });
+    } catch (e) {
+      console.error("Failed to generate magic link", e);
+      setNotification("Error creating link.");
+      setTimeout(() => setNotification(null), 3000);
+    }
   };
 
   if (!role) return (
@@ -422,6 +445,92 @@ const App: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {pendingClaimId && (
+        <div className="fixed inset-0 z-[600] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border-2 border-green-500 rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl">
+            <div className="flex flex-col items-center text-center space-y-6">
+              <Sword size={40} className="text-green-500" />
+              <h2 className="font-medieval text-3xl">Hero Onboarding</h2>
+              <div className="w-full space-y-4">
+                 <div className="space-y-1">
+                   <label className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Max HP</label>
+                   <input type="number" value={claimMaxHp} onChange={e => setClaimMaxHp(parseInt(e.target.value) || 1)} className="w-full bg-slate-800 p-4 rounded-xl text-white font-bold border border-slate-700 outline-none"/>
+                 </div>
+                 <div className="space-y-1">
+                   <label className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Armor Class</label>
+                   <input type="number" value={claimAc} onChange={e => setClaimAc(parseInt(e.target.value) || 1)} className="w-full bg-slate-800 p-4 rounded-xl text-white font-bold border border-slate-700 outline-none"/>
+                 </div>
+              </div>
+              <button onClick={() => {
+                const updated = entities.map(e => e.id === pendingClaimId ? { ...e, claimedBy: playerName, name: playerName, maxHp: claimMaxHp, hp: claimMaxHp, ac: claimAc } : e);
+                setRooms(prev => ({ ...prev, [activeRoomId]: { ...prev[activeRoomId], entities: updated } }));
+                setPendingClaimId(null);
+              }} className="w-full py-4 bg-green-600 hover:bg-green-500 text-white font-black rounded-2xl uppercase tracking-widest transition-all">ENTER REALM</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(role === 'dm' || role === 'workshop') && (
+        <>
+          <div className={`fixed left-0 top-1/2 -translate-y-1/2 z-[60] flex items-center transition-all duration-300 ${isFieldEditorOpen ? 'translate-x-[22rem]' : 'translate-x-0'}`}>
+            <button onClick={() => setIsFieldEditorOpen(!isFieldEditorOpen)} className="bg-amber-600 p-2 rounded-r-xl shadow-2xl border-y border-r border-amber-500 hover:bg-amber-500">
+              {isFieldEditorOpen ? <ChevronLeft size={20} className="text-white" /> : <ChevronRight size={20} className="text-white" />}
+            </button>
+          </div>
+          <div className={`fixed inset-y-0 left-0 z-[55] w-[22rem] bg-slate-900 border-r border-slate-700 shadow-2xl transition-transform duration-300 transform ${isFieldEditorOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+            <div className="p-6 h-full flex flex-col space-y-6 overflow-y-auto custom-scrollbar">
+              <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
+                {role === 'workshop' ? <Hammer className="text-emerald-500" size={24} /> : <Settings2 className="text-amber-500" size={24} />}
+                <h2 className="font-medieval text-xl tracking-tight">{role === 'workshop' ? 'Architect' : 'World Forge'}</h2>
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex justify-between items-center">
+                  Rooms {role === 'workshop' && <button onClick={() => createRoom(`Room ${Object.keys(rooms).length + 1}`)} className="p-1 hover:bg-slate-800 rounded text-amber-500 transition-colors"><Plus size={14}/></button>}
+                </h3>
+                <div className="space-y-2">
+                  {rooms && Object.values(rooms).map((room: Room) => (
+                    <div key={room.id} className={`flex items-center justify-between p-2 rounded-lg border ${activeRoomId === room.id ? 'bg-amber-600/20 border-amber-500' : 'bg-slate-800 border-slate-700'}`}>
+                      <button onClick={() => setActiveRoomId(room.id)} className="text-xs font-bold truncate flex-1 text-left">{room.name}</button>
+                      {role === 'workshop' && Object.keys(rooms).length > 1 && <button onClick={() => {
+                        const nextRooms = { ...rooms };
+                        delete nextRooms[room.id];
+                        setRooms(nextRooms);
+                        if (activeRoomId === room.id) setActiveRoomId(Object.keys(nextRooms)[0]);
+                      }} className="text-red-500 ml-2 hover:bg-red-900/20 p-1 rounded"><Trash2 size={12}/></button>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Brushes</h3>
+                <div className="grid grid-cols-3 gap-2">
+                  {['wall', 'lava', 'water', 'grass', 'eraser'].map(brush => (
+                    <button key={brush} onClick={() => setPlacementMode(brush)} className={`p-2 rounded-lg border text-[10px] font-bold capitalize transition-all ${placementMode === brush ? 'bg-amber-600 border-amber-500 shadow-lg scale-105' : 'bg-slate-800 border-slate-700'}`}>{brush}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-auto pt-4 border-t border-slate-800 space-y-4">
+                <div className="space-y-2">
+                  <h3 className="text-[10px] font-black text-amber-500 uppercase tracking-widest flex items-center gap-2">
+                    <Sparkles size={12}/> Monster Weaver
+                  </h3>
+                  <div className="relative">
+                    <input type="text" value={monsterPrompt} onChange={e => setMonsterPrompt(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleMonsterGeneration()} placeholder="Describe a beast..." className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white pr-10 outline-none focus:border-amber-500 transition-all"/>
+                    <button onClick={handleMonsterGeneration} disabled={isGeneratingMonster || !monsterPrompt} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-amber-500 disabled:opacity-30">
+                      {isGeneratingMonster ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
       )}
 
       <aside className={`bg-slate-900 border-r-2 border-slate-800 transition-all duration-300 flex flex-col z-30 shadow-2xl ${isSidebarOpen ? 'w-96' : 'w-0'}`}>
@@ -503,8 +612,13 @@ const App: React.FC = () => {
                </div>
                <h2 className="font-medieval text-4xl text-slate-400">Realm Null</h2>
                <p className="text-slate-500 leading-relaxed font-bold uppercase text-xs tracking-widest">
-                 {role === 'dm' ? "Initializing the world..." : "Searching the void for your Master's manifest..."}
+                 {sessionExists === false 
+                   ? `Searching for Realm [${sessionCode}]...` 
+                   : (role === 'dm' ? "Initializing the world..." : "Connecting to Master's manifest...")}
                </p>
+               {!sessionExists && role === 'member' && (
+                 <p className="text-[10px] text-amber-500 font-black animate-pulse">Ensure the Dungeon Master has clicked "START SESSION" in their window.</p>
+               )}
              </div>
            )}
         </div>

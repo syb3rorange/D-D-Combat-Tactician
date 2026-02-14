@@ -8,13 +8,17 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script>
-    window.process = window.process || { env: {} };
+    // Ensure process.env exists without nuking existing values (like API_KEY)
+    window.process = window.process || {};
+    window.process.env = window.process.env || {};
   </script>
   <style>
     body {
       font-family: 'Inter', sans-serif;
       background-color: #0f172a;
       color: #f8fafc;
+      margin: 0;
+      overflow: hidden;
     }
     .font-medieval {
       font-family: 'MedievalSharp', cursive;
@@ -44,7 +48,7 @@
       border-radius: 10px;
     }
   </style>
-<script type="importmap">
+  <script type="importmap">
 {
   "imports": {
     "react": "https://esm.sh/react@19.0.0",
