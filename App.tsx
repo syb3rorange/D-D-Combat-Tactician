@@ -32,6 +32,8 @@ import {
   Users
 } from 'lucide-react';
 
+const PERSISTENCE_KEY = 'vtt_session_data';
+
 const App: React.FC = () => {
   // --- Core State ---
   const [role, setRole] = useState<'dm' | 'member' | 'workshop' | null>(null);
@@ -41,6 +43,7 @@ const App: React.FC = () => {
   const [rooms, setRooms] = useState<Record<string, Room>>({});
   const [activeRoomId, setActiveRoomId] = useState<string>('');
   const [showEnemyHpToPlayers, setShowEnemyHpToPlayers] = useState(true);
+  const [isRestoring, setIsRestoring] = useState(true);
   
   // --- UI State ---
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -54,15 +57,64 @@ const App: React.FC = () => {
   const [isGeneratingMonster, setIsGeneratingMonster] = useState(false);
   const [tutorialStep, setTutorialStep] = useState<number>(-1);
   const [pendingClaimId, setPendingClaimId] = useState<string | null>(null);
-  const [claimMaxHp, setClaimMaxHp] = useState<number>(20);
-  const [claimAc, setClaimAc] = useState<number>(10);
+  const [claimMaxHp, setClaimMaxHp] = useState<number>(ENTITY_DEFAULTS.maxHp);
+  const [claimAc, setClaimAc] = useState<number>(ENTITY_DEFAULTS.ac);
 
-  // --- Networking State ---
+  // --- Networking State & Refs ---
   const [peerStatus, setPeerStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [connectedPeers, setConnectedPeers] = useState<string[]>([]);
   const peerRef = useRef<Peer | null>(null);
   const connectionsRef = useRef<Record<string, DataConnection>>({});
   const lastBroadcastRef = useRef<string>('');
+  
+  const handlersRef = useRef({
+    setRooms,
+    setActiveRoomId,
+    setEncounterStatus,
+    setShowEnemyHpToPlayers,
+    setPeerStatus,
+    role,
+    sessionCode,
+    playerName
+  });
+
+  useEffect(() => {
+    handlersRef.current = {
+      setRooms,
+      setActiveRoomId,
+      setEncounterStatus,
+      setShowEnemyHpToPlayers,
+      setPeerStatus,
+      role,
+      sessionCode,
+      playerName
+    };
+  }, [role, sessionCode, playerName]);
+
+  // --- Session Hydration (Load from LocalStorage) ---
+  useEffect(() => {
+    const saved = localStorage.getItem(PERSISTENCE_KEY);
+    if (saved) {
+      try {
+        const { role: sRole, sessionCode: sCode, playerName: sName } = JSON.parse(saved);
+        if (sRole && sCode && sName) {
+          setRole(sRole);
+          setSessionCode(sCode);
+          setPlayerName(sName);
+        }
+      } catch (e) {
+        console.error("Failed to restore session", e);
+      }
+    }
+    setIsRestoring(false);
+  }, []);
+
+  // --- Save Session Data ---
+  useEffect(() => {
+    if (role && sessionCode && playerName) {
+      localStorage.setItem(PERSISTENCE_KEY, JSON.stringify({ role, sessionCode, playerName }));
+    }
+  }, [role, sessionCode, playerName]);
 
   const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
   const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -71,14 +123,60 @@ const App: React.FC = () => {
   const entities = currentRoom?.entities || [];
   const gridSettings = currentRoom?.gridSettings || INITIAL_GRID_SETTINGS;
 
-  // --- Utility Functions ---
   const notify = (msg: string) => {
     setNotification(msg);
     setTimeout(() => setNotification(null), 3000);
   };
 
-  // --- Networking Logic ---
-  
+  const handleUpdateHpLocal = useCallback((id: string, hp: number) => {
+    setRooms(prev => {
+      const targetRoomId = activeRoomId;
+      if (!targetRoomId || !prev[targetRoomId]) return prev;
+      return {
+        ...prev,
+        [targetRoomId]: {
+          ...prev[targetRoomId],
+          entities: prev[targetRoomId].entities.map(e => e.id === id ? { ...e, hp: Math.max(0, Math.min(e.maxHp, hp)) } : e)
+        }
+      };
+    });
+  }, [activeRoomId]);
+
+  const handleUpdateEntityLocal = useCallback((updated: Entity) => {
+    setRooms(prev => {
+      if (!activeRoomId || !prev[activeRoomId]) return prev;
+      return {
+        ...prev,
+        [activeRoomId]: {
+          ...prev[activeRoomId],
+          entities: prev[activeRoomId].entities.map(e => e.id === updated.id ? updated : e)
+        }
+      };
+    });
+  }, [activeRoomId]);
+
+  const handleUpdateHp = useCallback((id: string, hp: number) => {
+    if (role === 'member') {
+      const dmConn = connectionsRef.current[`DND-${sessionCode}`];
+      if (dmConn && dmConn.open) {
+        dmConn.send({ type: 'ACTION_REQUEST', action: 'UPDATE_HP', payload: { id, hp } });
+      }
+      return;
+    }
+    handleUpdateHpLocal(id, hp);
+  }, [role, sessionCode, handleUpdateHpLocal]);
+
+  const handleUpdateEntity = useCallback((updated: Entity) => {
+    if (role === 'member') {
+      const dmConn = connectionsRef.current[`DND-${sessionCode}`];
+      if (dmConn && dmConn.open) {
+        dmConn.send({ type: 'ACTION_REQUEST', action: 'UPDATE_ENTITY', payload: updated });
+      }
+      return;
+    }
+    handleUpdateEntityLocal(updated);
+  }, [role, sessionCode, handleUpdateEntityLocal]);
+
   const broadcastState = useCallback((forceState?: Partial<SessionData>) => {
     if (role !== 'dm') return;
     const data: SessionData = {
@@ -90,12 +188,10 @@ const App: React.FC = () => {
       ...forceState
     };
     
-    // Only broadcast if something meaningful changed
     const serialized = JSON.stringify(data);
     if (serialized === lastBroadcastRef.current) return;
     lastBroadcastRef.current = serialized;
 
-    // Fix: Explicitly cast to DataConnection[] to ensure 'open' and 'send' are accessible.
     (Object.values(connectionsRef.current) as DataConnection[]).forEach(conn => {
       if (conn.open) {
         conn.send({ type: 'STATE_UPDATE', data });
@@ -103,95 +199,47 @@ const App: React.FC = () => {
     });
   }, [role, rooms, activeRoomId, encounterStatus, showEnemyHpToPlayers]);
 
-  const handleUpdateHp = useCallback((id: string, hp: number) => {
-    if (role === 'member') {
-      connectionsRef.current[`DND-${sessionCode}`]?.send({ 
-        type: 'ACTION_REQUEST', action: 'UPDATE_HP', payload: { id, hp } 
-      });
-      return;
-    }
-    setRooms(prev => {
-      if (!activeRoomId || !prev[activeRoomId]) return prev;
-      const room = prev[activeRoomId];
-      return {
-        ...prev,
-        [activeRoomId]: {
-          ...room,
-          entities: room.entities.map(e => e.id === id ? { ...e, hp: Math.max(0, Math.min(e.maxHp, hp)) } : e)
-        }
-      };
-    });
-  }, [activeRoomId, role, sessionCode]);
-
-  const handleUpdateEntity = useCallback((updated: Entity) => {
-    if (role === 'member') {
-      connectionsRef.current[`DND-${sessionCode}`]?.send({ 
-        type: 'ACTION_REQUEST', action: 'UPDATE_ENTITY', payload: updated 
-      });
-      return;
-    }
-    setRooms(prev => {
-      if (!activeRoomId || !prev[activeRoomId]) return prev;
-      const room = prev[activeRoomId];
-      return {
-        ...prev,
-        [activeRoomId]: {
-          ...room,
-          entities: room.entities.map(e => e.id === updated.id ? updated : e)
-        }
-      };
-    });
-  }, [activeRoomId, role, sessionCode]);
-
-  const handleData = useCallback((data: any, conn: DataConnection) => {
-    if (data.type === 'STATE_UPDATE' && role === 'member') {
-      const remote = data.data as SessionData;
-      setRooms(remote.rooms);
-      setActiveRoomId(remote.activeRoomId);
-      setEncounterStatus(remote.status);
-      setShowEnemyHpToPlayers(remote.showEnemyHpToPlayers ?? true);
-      setPeerStatus('connected');
-    }
-
-    if (data.type === 'ACTION_REQUEST' && role === 'dm') {
-      const { action, payload } = data;
-      if (action === 'UPDATE_ENTITY') {
-        handleUpdateEntity(payload);
-      } else if (action === 'UPDATE_HP') {
-        handleUpdateHp(payload.id, payload.hp);
-      }
-    }
-  }, [role, handleUpdateEntity, handleUpdateHp]);
-
-  // Handle URL Entry
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const urlSession = params.get('session');
-    if (urlSession && !sessionCode) {
-      setSessionCode(urlSession.toUpperCase());
-    }
-  }, [sessionCode]);
-
-  // Init Networking
   useEffect(() => {
     if (!sessionCode || role === 'workshop') return;
 
-    const p = new Peer(role === 'dm' ? `DND-${sessionCode}` : undefined, {
-      debug: 1
-    });
+    const peerId = role === 'dm' ? `DND-${sessionCode}` : undefined;
+    const p = new Peer(peerId, { debug: 1 });
     peerRef.current = p;
 
-    p.on('open', (id) => {
+    const processData = (data: any) => {
+      const { setRooms, setActiveRoomId, setEncounterStatus, setShowEnemyHpToPlayers, setPeerStatus, role: currentRole } = handlersRef.current;
+
+      if (data.type === 'STATE_UPDATE' && currentRole === 'member') {
+        const remote = data.data as SessionData;
+        setRooms(remote.rooms);
+        setActiveRoomId(remote.activeRoomId);
+        setEncounterStatus(remote.status);
+        setShowEnemyHpToPlayers(remote.showEnemyHpToPlayers ?? true);
+        setPeerStatus('connected');
+      }
+
+      if (data.type === 'ACTION_REQUEST' && currentRole === 'dm') {
+        const { action, payload } = data;
+        if (action === 'UPDATE_ENTITY') {
+          handleUpdateEntityLocal(payload);
+        } else if (action === 'UPDATE_HP') {
+          handleUpdateHpLocal(payload.id, payload.hp);
+        }
+      }
+    };
+
+    p.on('open', () => {
       setPeerStatus(role === 'dm' ? 'connected' : 'connecting');
       if (role === 'member') {
         const conn = p.connect(`DND-${sessionCode}`, { reliable: true });
         conn.on('open', () => {
           setPeerStatus('connected');
           connectionsRef.current[conn.peer] = conn;
-          conn.send({ type: 'JOIN_REQUEST', name: playerName });
+          conn.send({ type: 'JOIN_REQUEST', name: handlersRef.current.playerName });
         });
-        conn.on('data', (d) => handleData(d, conn));
+        conn.on('data', (d) => processData(d));
         conn.on('close', () => setPeerStatus('disconnected'));
+        conn.on('error', () => setPeerStatus('disconnected'));
       }
     });
 
@@ -199,13 +247,8 @@ const App: React.FC = () => {
       conn.on('open', () => {
         connectionsRef.current[conn.peer] = conn;
         setConnectedPeers(prev => [...new Set([...prev, conn.peer])]);
-        // Send initial state to new joiner
-        conn.send({ 
-          type: 'STATE_UPDATE', 
-          data: { rooms, activeRoomId, status: encounterStatus, showEnemyHpToPlayers, updatedAt: new Date().toISOString() } 
-        });
       });
-      conn.on('data', (d) => handleData(d, conn));
+      conn.on('data', (d) => processData(d));
       conn.on('close', () => {
         setConnectedPeers(prev => prev.filter(id => id !== conn.peer));
         delete connectionsRef.current[conn.peer];
@@ -214,27 +257,32 @@ const App: React.FC = () => {
 
     return () => {
       p.destroy();
+      peerRef.current = null;
       connectionsRef.current = {};
     };
-  }, [sessionCode, role, handleData, playerName, activeRoomId, encounterStatus, rooms, showEnemyHpToPlayers]);
+  }, [sessionCode, role, handleUpdateEntityLocal, handleUpdateHpLocal]);
 
-  // Broadcast loop for DM
   useEffect(() => {
     if (role === 'dm') broadcastState();
   }, [rooms, activeRoomId, encounterStatus, showEnemyHpToPlayers, role, broadcastState]);
 
-  // --- Handlers ---
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlSession = params.get('session');
+    if (urlSession && !sessionCode) {
+      setSessionCode(urlSession.toUpperCase());
+    }
+  }, [sessionCode]);
 
   const handleDeleteEntity = useCallback((id: string) => {
     if (role !== 'dm') return;
     setRooms(prev => {
       if (!activeRoomId || !prev[activeRoomId]) return prev;
-      const room = prev[activeRoomId];
       return {
         ...prev,
         [activeRoomId]: {
-          ...room,
-          entities: room.entities.filter(e => e.id !== id)
+          ...prev[activeRoomId],
+          entities: prev[activeRoomId].entities.filter(e => e.id !== id)
         }
       };
     });
@@ -349,6 +397,24 @@ const App: React.FC = () => {
     }
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem(PERSISTENCE_KEY);
+    setRole(null);
+    setSessionCode('');
+    setPlayerName('');
+    setRooms({});
+    setPeerStatus('disconnected');
+    if (peerRef.current) peerRef.current.destroy();
+    setShowLogoutConfirm(false);
+  };
+
+  if (isRestoring) return (
+    <div className="h-screen bg-slate-950 flex items-center justify-center flex-col gap-4 text-white">
+      <Loader2 size={48} className="text-amber-500 animate-spin" />
+      <span className="font-medieval text-xl tracking-widest animate-pulse uppercase">Restoring Realm Link...</span>
+    </div>
+  );
+
   if (!role) return <RoleSelection onSelectDM={startHosting} onJoin={(c, n) => { setSessionCode(c.toUpperCase()); setPlayerName(n); setRole('member'); }} onSelectWorkshop={() => setRole('workshop')} initialSessionCode={sessionCode} />;
 
   return (
@@ -405,7 +471,7 @@ const App: React.FC = () => {
                   <h3 className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-1"><Users size={10}/> Party Pulse</h3>
                   <div className="flex flex-wrap gap-2">
                      {connectedPeers.length === 0 ? <span className="text-[10px] text-slate-600 italic">No heroes present...</span> : connectedPeers.map(p => (
-                       <div key={p} className="bg-green-600/10 border border-green-500/30 text-green-500 text-[8px] px-2 py-1 rounded-full font-bold">HERO-{p.slice(-4)}</div>
+                       <div key={p} className="bg-green-600/10 border border-green-500/30 text-green-500 text-[8px] px-2 py-1 rounded-full font-bold uppercase tracking-widest">HERO-{p.slice(-4)}</div>
                      ))}
                   </div>
                 </div>
@@ -413,8 +479,8 @@ const App: React.FC = () => {
 
               {role === 'dm' && currentRoom && (
                 <div className="grid grid-cols-2 gap-2 mb-4">
-                  <button onClick={() => addEntity('player')} className="p-3 bg-green-900/20 border border-green-600/30 rounded-xl text-green-400 text-[10px] font-black hover:bg-green-900/30">Hero Slot</button>
-                  <button onClick={() => addEntity('enemy')} className="p-3 bg-red-900/20 border border-red-600/30 rounded-xl text-red-400 text-[10px] font-black hover:bg-red-900/30">Monster Slot</button>
+                  <button onClick={() => addEntity('player')} className="p-3 bg-green-900/20 border border-green-600/30 rounded-xl text-green-400 text-[10px] font-black hover:bg-green-900/30">ADD PLAYER SLOT</button>
+                  <button onClick={() => addEntity('enemy')} className="p-3 bg-red-900/20 border border-red-600/30 rounded-xl text-red-400 text-[10px] font-black hover:bg-red-900/30">ADD MONSTER SLOT</button>
                 </div>
               )}
 
@@ -517,7 +583,7 @@ const App: React.FC = () => {
             <AlertTriangle size={32} className="text-red-500 mx-auto animate-pulse" />
             <h2 className="font-medieval text-3xl">Sever Realm Link?</h2>
             <div className="flex flex-col gap-3">
-              <button onClick={() => window.location.reload()} className="py-4 bg-red-600 text-white font-black rounded-2xl uppercase tracking-widest">DISCONNECT</button>
+              <button onClick={handleLogout} className="py-4 bg-red-600 text-white font-black rounded-2xl uppercase tracking-widest transition-all hover:bg-red-500 shadow-xl active:scale-95">DISCONNECT</button>
               <button onClick={() => setShowLogoutConfirm(false)} className="py-3 text-slate-500 font-bold uppercase hover:text-white">REMAIN</button>
             </div>
           </div>
