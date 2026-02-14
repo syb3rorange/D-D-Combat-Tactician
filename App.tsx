@@ -51,7 +51,6 @@ const App: React.FC = () => {
   const [monsterPrompt, setMonsterPrompt] = useState('');
   const [isGeneratingMonster, setIsGeneratingMonster] = useState(false);
   const [tutorialStep, setTutorialStep] = useState<number>(-1);
-  const [isInitializing, setIsInitializing] = useState(false);
   
   const [rooms, setRooms] = useState<Record<string, Room>>({});
   const [activeRoomId, setActiveRoomId] = useState<string>('');
@@ -66,11 +65,11 @@ const App: React.FC = () => {
   const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
   const generateId = () => Math.random().toString(36).substr(2, 9);
 
-  const currentRoom = (activeRoomId && rooms[activeRoomId]) ? rooms[activeRoomId] : null;
+  // Extremely defensive currentRoom calculation
+  const currentRoom = (activeRoomId && rooms && rooms[activeRoomId]) ? rooms[activeRoomId] : null;
   const entities = currentRoom?.entities || [];
   const gridSettings = currentRoom?.gridSettings || INITIAL_GRID_SETTINGS;
 
-  // Handle URL Session and Data Injection
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlSession = params.get('session');
@@ -81,7 +80,6 @@ const App: React.FC = () => {
       
       if (urlData) {
         try {
-          // Standardize base64 for safe decoding
           const safeBase64 = urlData.replace(/-/g, '+').replace(/_/g, '/');
           const decodedData = JSON.parse(atob(safeBase64));
           if (decodedData.rooms) {
@@ -97,7 +95,6 @@ const App: React.FC = () => {
     }
   }, [sessionCode]);
 
-  // Sync URL and Session to Storage
   useEffect(() => {
     if (sessionCode && role) {
       const url = new URL(window.location.href);
@@ -127,7 +124,7 @@ const App: React.FC = () => {
   }, [sessionCode, role]);
 
   const fetchFromCloud = useCallback(() => {
-    if (!sessionCode || role === 'workshop' || isInitializing) return;
+    if (!sessionCode || role === 'workshop') return;
     const storageKey = `dnd_session_${sessionCode}`;
     const rawData = localStorage.getItem(storageKey);
     
@@ -148,7 +145,7 @@ const App: React.FC = () => {
     } else if (role === 'member' && !activeRoomId) {
       setSessionExists(false);
     }
-  }, [sessionCode, role, isInitializing, activeRoomId]);
+  }, [sessionCode, role, activeRoomId]);
 
   useEffect(() => {
     if (sessionCode && role !== 'workshop') {
@@ -167,15 +164,15 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const isDM = role === 'dm';
-    if (isDM && sessionCode && !isInitializing && Object.keys(rooms || {}).length > 0) {
+    if (isDM && sessionCode && Object.keys(rooms || {}).length > 0) {
       syncToCloud({ rooms, activeRoomId, status: encounterStatus, showEnemyHpToPlayers });
     }
-  }, [rooms, activeRoomId, encounterStatus, role, sessionCode, syncToCloud, showEnemyHpToPlayers, isInitializing]);
+  }, [rooms, activeRoomId, encounterStatus, role, sessionCode, syncToCloud, showEnemyHpToPlayers]);
 
   const handleUpdateHp = useCallback((id: string, hp: number) => {
     setRooms(prev => {
+      if (!activeRoomId || !prev || !prev[activeRoomId]) return prev;
       const room = prev[activeRoomId];
-      if (!room) return prev;
       return {
         ...prev,
         [activeRoomId]: {
@@ -188,8 +185,8 @@ const App: React.FC = () => {
 
   const handleUpdateEntity = useCallback((updated: Entity) => {
     setRooms(prev => {
+      if (!activeRoomId || !prev || !prev[activeRoomId]) return prev;
       const room = prev[activeRoomId];
-      if (!room) return prev;
       return {
         ...prev,
         [activeRoomId]: {
@@ -202,8 +199,8 @@ const App: React.FC = () => {
 
   const handleDeleteEntity = useCallback((id: string) => {
     setRooms(prev => {
+      if (!activeRoomId || !prev || !prev[activeRoomId]) return prev;
       const room = prev[activeRoomId];
-      if (!room) return prev;
       return {
         ...prev,
         [activeRoomId]: {
@@ -226,7 +223,7 @@ const App: React.FC = () => {
       setNotification("Magic Portal Link Copied!");
       setTimeout(() => setNotification(null), 3000);
     } catch (e) {
-      setNotification("Linking Failed. Data too large?");
+      setNotification("Linking Failed.");
     }
   };
 
@@ -263,8 +260,8 @@ const App: React.FC = () => {
         };
         
         setRooms(prev => {
+          if (!activeRoomId || !prev || !prev[activeRoomId]) return prev;
           const room = prev[activeRoomId];
-          if (!room) return prev;
           return { ...prev, [activeRoomId]: { ...room, entities: [...room.entities, newEntity] } };
         });
         setSelectedEntityId(newEntity.id);
@@ -290,8 +287,8 @@ const App: React.FC = () => {
       x: center.x, y: center.y, color: COLORS[type], isVisibleToPlayers: true
     };
     setRooms(prev => {
+      if (!activeRoomId || !prev || !prev[activeRoomId]) return prev;
       const room = prev[activeRoomId];
-      if (!room) return prev;
       return { ...prev, [activeRoomId]: { ...room, entities: [...room.entities, newEntity] } };
     });
     setSelectedEntityId(newEntity.id);
@@ -317,8 +314,8 @@ const App: React.FC = () => {
             isVisibleToPlayers: true
           };
           setRooms(prev => {
+            if (!activeRoomId || !prev || !prev[activeRoomId]) return prev;
             const room = prev[activeRoomId];
-            if (!room) return prev;
             return { ...prev, [activeRoomId]: { ...room, entities: [...room.entities, newEntity] } };
           });
           return;
@@ -362,32 +359,40 @@ const App: React.FC = () => {
     setShowLogoutConfirm(false);
   };
 
-  if (!role || isInitializing) return (
+  const startHosting = () => {
+    const code = generateCode();
+    const firstId = generateId();
+    const initialRooms = { [firstId]: { id: firstId, name: 'The Entrance', entities: [], gridSettings: { ...INITIAL_GRID_SETTINGS } } };
+    
+    // Crucial: Set all states needed for the main view before switching role
+    setRooms(initialRooms);
+    setActiveRoomId(firstId);
+    setSessionCode(code);
+    setPlayerName('The Dungeon Master');
+    // Role switch must be last to ensure re-render has the context it needs
+    setRole('dm');
+  };
+
+  const startWorkshop = () => {
+    const firstId = generateId();
+    const initialRooms = { [firstId]: { id: firstId, name: 'Main Blueprint', entities: [], gridSettings: { ...INITIAL_GRID_SETTINGS } } };
+    
+    setRooms(initialRooms);
+    setActiveRoomId(firstId);
+    setSessionCode('WORKSHOP');
+    setPlayerName('Architect');
+    setRole('workshop');
+  };
+
+  if (!role) return (
     <RoleSelection 
-      onSelectDM={() => { 
-        setIsInitializing(true);
-        const code = generateCode();
-        const firstId = generateId();
-        setSessionCode(code);
-        setPlayerName('The Dungeon Master');
-        setRooms({ [firstId]: { id: firstId, name: 'The Entrance', entities: [], gridSettings: { ...INITIAL_GRID_SETTINGS } } });
-        setActiveRoomId(firstId);
-        setTimeout(() => { setRole('dm'); setIsInitializing(false); }, 100);
-      }} 
+      onSelectDM={startHosting} 
       onJoin={(c, n) => { 
         setSessionCode(c.toUpperCase()); 
         setPlayerName(n); 
         setRole('member'); 
       }} 
-      onSelectWorkshop={() => {
-        setIsInitializing(true);
-        const firstId = generateId();
-        setSessionCode('WORKSHOP');
-        setPlayerName('Architect');
-        setRooms({ [firstId]: { id: firstId, name: 'Main Blueprint', entities: [], gridSettings: { ...INITIAL_GRID_SETTINGS } } });
-        setActiveRoomId(firstId);
-        setTimeout(() => { setRole('workshop'); setIsInitializing(false); }, 100);
-      }}
+      onSelectWorkshop={startWorkshop}
       initialSessionCode={sessionCode}
     />
   );
@@ -409,7 +414,7 @@ const App: React.FC = () => {
           <div className="bg-slate-900 border-2 border-red-500 rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl">
             <div className="flex flex-col items-center text-center space-y-6">
               <AlertTriangle size={32} className="text-red-500 animate-pulse" />
-              <h2 className="font-medieval text-3xl">Abandon Realm?</h2>
+              <h2 className="font-medieval text-3xl text-white">Abandon Realm?</h2>
               <div className="w-full flex flex-col gap-3">
                 <button onClick={logout} className="w-full py-4 bg-red-600 hover:bg-red-500 text-white font-black rounded-2xl uppercase tracking-widest transition-all">LEAVE SESSION</button>
                 <button onClick={() => setShowLogoutConfirm(false)} className="w-full py-3 text-slate-500 font-bold uppercase hover:text-white">STAY</button>
@@ -417,92 +422,6 @@ const App: React.FC = () => {
             </div>
           </div>
         </div>
-      )}
-
-      {pendingClaimId && (
-        <div className="fixed inset-0 z-[600] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-slate-900 border-2 border-green-500 rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl">
-            <div className="flex flex-col items-center text-center space-y-6">
-              <Sword size={40} className="text-green-500" />
-              <h2 className="font-medieval text-3xl">Hero Onboarding</h2>
-              <div className="w-full space-y-4">
-                 <div className="space-y-1">
-                   <label className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Max HP</label>
-                   <input type="number" value={claimMaxHp} onChange={e => setClaimMaxHp(parseInt(e.target.value) || 1)} className="w-full bg-slate-800 p-4 rounded-xl text-white font-bold border border-slate-700 outline-none"/>
-                 </div>
-                 <div className="space-y-1">
-                   <label className="text-[10px] text-slate-500 font-black uppercase tracking-widest">Armor Class</label>
-                   <input type="number" value={claimAc} onChange={e => setClaimAc(parseInt(e.target.value) || 1)} className="w-full bg-slate-800 p-4 rounded-xl text-white font-bold border border-slate-700 outline-none"/>
-                 </div>
-              </div>
-              <button onClick={() => {
-                const updated = entities.map(e => e.id === pendingClaimId ? { ...e, claimedBy: playerName, name: playerName, maxHp: claimMaxHp, hp: claimMaxHp, ac: claimAc } : e);
-                setRooms(prev => ({ ...prev, [activeRoomId]: { ...prev[activeRoomId], entities: updated } }));
-                setPendingClaimId(null);
-              }} className="w-full py-4 bg-green-600 hover:bg-green-500 text-white font-black rounded-2xl uppercase tracking-widest transition-all">ENTER REALM</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {(role === 'dm' || role === 'workshop') && (
-        <>
-          <div className={`fixed left-0 top-1/2 -translate-y-1/2 z-[60] flex items-center transition-all duration-300 ${isFieldEditorOpen ? 'translate-x-[22rem]' : 'translate-x-0'}`}>
-            <button onClick={() => setIsFieldEditorOpen(!isFieldEditorOpen)} className="bg-amber-600 p-2 rounded-r-xl shadow-2xl border-y border-r border-amber-500 hover:bg-amber-500">
-              {isFieldEditorOpen ? <ChevronLeft size={20} className="text-white" /> : <ChevronRight size={20} className="text-white" />}
-            </button>
-          </div>
-          <div className={`fixed inset-y-0 left-0 z-[55] w-[22rem] bg-slate-900 border-r border-slate-700 shadow-2xl transition-transform duration-300 transform ${isFieldEditorOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-            <div className="p-6 h-full flex flex-col space-y-6 overflow-y-auto custom-scrollbar">
-              <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
-                {role === 'workshop' ? <Hammer className="text-emerald-500" size={24} /> : <Settings2 className="text-amber-500" size={24} />}
-                <h2 className="font-medieval text-xl tracking-tight">{role === 'workshop' ? 'Architect' : 'World Forge'}</h2>
-              </div>
-
-              <div className="space-y-3">
-                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex justify-between items-center">
-                  Rooms {role === 'workshop' && <button onClick={() => createRoom(`Room ${Object.keys(rooms).length + 1}`)} className="p-1 hover:bg-slate-800 rounded text-amber-500 transition-colors"><Plus size={14}/></button>}
-                </h3>
-                <div className="space-y-2">
-                  {Object.values(rooms || {}).map((room: Room) => (
-                    <div key={room.id} className={`flex items-center justify-between p-2 rounded-lg border ${activeRoomId === room.id ? 'bg-amber-600/20 border-amber-500' : 'bg-slate-800 border-slate-700'}`}>
-                      <button onClick={() => setActiveRoomId(room.id)} className="text-xs font-bold truncate flex-1 text-left">{room.name}</button>
-                      {role === 'workshop' && Object.keys(rooms).length > 1 && <button onClick={() => {
-                        const nextRooms = { ...rooms };
-                        delete nextRooms[room.id];
-                        setRooms(nextRooms);
-                        if (activeRoomId === room.id) setActiveRoomId(Object.keys(nextRooms)[0]);
-                      }} className="text-red-500 ml-2 hover:bg-red-900/20 p-1 rounded"><Trash2 size={12}/></button>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Brushes</h3>
-                <div className="grid grid-cols-3 gap-2">
-                  {['wall', 'lava', 'water', 'grass', 'eraser'].map(brush => (
-                    <button key={brush} onClick={() => setPlacementMode(brush)} className={`p-2 rounded-lg border text-[10px] font-bold capitalize transition-all ${placementMode === brush ? 'bg-amber-600 border-amber-500 shadow-lg scale-105' : 'bg-slate-800 border-slate-700'}`}>{brush}</button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-auto pt-4 border-t border-slate-800 space-y-4">
-                <div className="space-y-2">
-                  <h3 className="text-[10px] font-black text-amber-500 uppercase tracking-widest flex items-center gap-2">
-                    <Sparkles size={12}/> Monster Weaver
-                  </h3>
-                  <div className="relative">
-                    <input type="text" value={monsterPrompt} onChange={e => setMonsterPrompt(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleMonsterGeneration()} placeholder="Describe a beast..." className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white pr-10 outline-none focus:border-amber-500 transition-all"/>
-                    <button onClick={handleMonsterGeneration} disabled={isGeneratingMonster || !monsterPrompt} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-amber-500 disabled:opacity-30">
-                      {isGeneratingMonster ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </>
       )}
 
       <aside className={`bg-slate-900 border-r-2 border-slate-800 transition-all duration-300 flex flex-col z-30 shadow-2xl ${isSidebarOpen ? 'w-96' : 'w-0'}`}>
@@ -584,13 +503,8 @@ const App: React.FC = () => {
                </div>
                <h2 className="font-medieval text-4xl text-slate-400">Realm Null</h2>
                <p className="text-slate-500 leading-relaxed font-bold uppercase text-xs tracking-widest">
-                 {role === 'dm' ? "No session data found. Start by creating a map." : "Searching the void for your Master's manifest..."}
+                 {role === 'dm' ? "Initializing the world..." : "Searching the void for your Master's manifest..."}
                </p>
-               {role === 'dm' && (
-                 <button onClick={() => createRoom('The Entrance')} className="py-5 px-10 bg-amber-600 hover:bg-amber-500 text-white font-black rounded-[2rem] uppercase tracking-widest cursor-pointer shadow-xl transition-all active:scale-95">
-                   INITIALIZE REALM
-                 </button>
-               )}
              </div>
            )}
         </div>

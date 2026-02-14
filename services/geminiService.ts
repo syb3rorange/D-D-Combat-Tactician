@@ -1,10 +1,16 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 
-// Initialize GoogleGenAI using the process.env.API_KEY directly.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 export const generateMonster = async (description: string) => {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) {
+    console.error("Gemini API Key is missing from the environment.");
+    return null;
+  }
+
+  // Create instance inside the function to ensure it uses the latest key and avoids module-level initialization errors.
+  const ai = new GoogleGenAI({ apiKey });
+
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -26,15 +32,13 @@ export const generateMonster = async (description: string) => {
 
     let text = response.text || "";
     
-    // Clean potential markdown artifacts from the AI response
     if (text.includes("```")) {
       text = text.replace(/```json/g, "").replace(/```/g, "").trim();
     }
 
     if (!text) throw new Error("Empty AI response");
 
-    const data = JSON.parse(text);
-    return data;
+    return JSON.parse(text);
   } catch (error) {
     console.error("Error generating monster:", error);
     return null;

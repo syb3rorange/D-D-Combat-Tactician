@@ -8,7 +8,6 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script>
-    // Polyfill process for environments that don't provide it automatically
     window.process = window.process || { env: {} };
   </script>
   <style>
@@ -33,7 +32,6 @@
     ::-webkit-scrollbar-thumb:hover {
       background: #64748b;
     }
-    
     .custom-scrollbar::-webkit-scrollbar {
       width: 6px;
       height: 6px;
@@ -62,7 +60,6 @@
 </head>
 <body>
   <div id="root"></div>
-  <!-- Entry point for the application -->
   <script type="module" src="./index.tsx"></script>
 </body>
 </html>
