@@ -1,5 +1,6 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import Peer, { DataConnection } from 'peerjs';
 import { Entity, EntityType, GridSettings, EncounterStatus, SessionData, Room } from './types';
 import { INITIAL_GRID_SETTINGS, ENTITY_DEFAULTS, COLORS } from './constants';
 import GridMap from './components/GridMap';
@@ -27,168 +28,90 @@ import {
   Search,
   Share2,
   ZoomIn,
-  ZoomOut
+  ZoomOut,
+  Users
 } from 'lucide-react';
 
 const App: React.FC = () => {
+  // --- Core State ---
   const [role, setRole] = useState<'dm' | 'member' | 'workshop' | null>(null);
   const [playerName, setPlayerName] = useState<string>('');
   const [sessionCode, setSessionCode] = useState<string>('');
   const [encounterStatus, setEncounterStatus] = useState<EncounterStatus>('active');
+  const [rooms, setRooms] = useState<Record<string, Room>>({});
+  const [activeRoomId, setActiveRoomId] = useState<string>('');
+  const [showEnemyHpToPlayers, setShowEnemyHpToPlayers] = useState(true);
+  
+  // --- UI State ---
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isFieldEditorOpen, setIsFieldEditorOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [placementMode, setPlacementMode] = useState<string | null>(null);
-  const [showEnemyHpToPlayers, setShowEnemyHpToPlayers] = useState(true);
   const [notification, setNotification] = useState<string | null>(null);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-  const [sessionExists, setSessionExists] = useState<boolean | null>(null); 
   const [monsterPrompt, setMonsterPrompt] = useState('');
   const [isGeneratingMonster, setIsGeneratingMonster] = useState(false);
   const [tutorialStep, setTutorialStep] = useState<number>(-1);
-  
-  const [rooms, setRooms] = useState<Record<string, Room>>({});
-  const [activeRoomId, setActiveRoomId] = useState<string>('');
-  
   const [pendingClaimId, setPendingClaimId] = useState<string | null>(null);
   const [claimMaxHp, setClaimMaxHp] = useState<number>(20);
   const [claimAc, setClaimAc] = useState<number>(10);
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const lastUpdateRef = useRef<string>('');
+  // --- Networking State ---
+  const [peerStatus, setPeerStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  const [connectedPeers, setConnectedPeers] = useState<string[]>([]);
+  const peerRef = useRef<Peer | null>(null);
+  const connectionsRef = useRef<Record<string, DataConnection>>({});
+  const lastBroadcastRef = useRef<string>('');
 
   const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
   const generateId = () => Math.random().toString(36).substr(2, 9);
 
-  // Extremely defensive currentRoom calculation
   const currentRoom = (activeRoomId && rooms && rooms[activeRoomId]) ? rooms[activeRoomId] : null;
   const entities = currentRoom?.entities || [];
   const gridSettings = currentRoom?.gridSettings || INITIAL_GRID_SETTINGS;
 
-  // Handle URL Session and Data Injection
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const urlSession = params.get('session');
-    const urlData = params.get('data');
-
-    if (urlSession && !sessionCode) {
-      setSessionCode(urlSession.toUpperCase());
-      
-      if (urlData) {
-        try {
-          const safeBase64 = urlData.replace(/-/g, '+').replace(/_/g, '/');
-          const decodedData = JSON.parse(atob(safeBase64));
-          if (decodedData.rooms) {
-            setRooms(decodedData.rooms);
-            setActiveRoomId(decodedData.activeRoomId);
-            setEncounterStatus(decodedData.status || 'active');
-            setSessionExists(true);
-          }
-        } catch (e) {
-          console.error("Portal Data Corruption", e);
-        }
-      }
-    }
-  }, [sessionCode]);
-
-  const syncToCloud = useCallback((data: Partial<SessionData>, explicitCode?: string) => {
-    const code = explicitCode || sessionCode;
-    if (!code || role === 'workshop') return;
-    const storageKey = `dnd_session_${code}`;
-    const timestamp = new Date().toISOString();
-    
-    try {
-      const existingRaw = localStorage.getItem(storageKey);
-      const existing = existingRaw ? JSON.parse(existingRaw) : {
-        rooms: {}, activeRoomId: '', status: 'active', updatedAt: timestamp, showEnemyHpToPlayers: true
-      };
-      const updated: SessionData = { ...existing, ...data, updatedAt: timestamp };
-      lastUpdateRef.current = timestamp;
-      localStorage.setItem(storageKey, JSON.stringify(updated));
-      setSessionExists(true);
-    } catch (e) {
-      console.error("Sync Error", e);
-    }
-  }, [sessionCode, role]);
-
-  const fetchFromCloud = useCallback(() => {
-    if (!sessionCode || role === 'workshop') return;
-    const storageKey = `dnd_session_${sessionCode}`;
-    const rawData = localStorage.getItem(storageKey);
-    
-    if (rawData) {
-      try {
-        const data: SessionData = JSON.parse(rawData);
-        setSessionExists(true);
-        // FORCE update if local state is empty OR if remote data is newer
-        const isCurrentlyEmpty = Object.keys(rooms).length === 0;
-        if (isCurrentlyEmpty || !lastUpdateRef.current || data.updatedAt > lastUpdateRef.current) {
-          lastUpdateRef.current = data.updatedAt;
-          setRooms(data.rooms || {});
-          setActiveRoomId(data.activeRoomId);
-          setEncounterStatus(data.status);
-          setShowEnemyHpToPlayers(data.showEnemyHpToPlayers ?? true);
-        }
-      } catch (e) {
-        console.error("Fetch failure", e);
-      }
-    } else if (role === 'member') {
-      // If we are a member and nothing is found yet, indicate searching
-      setSessionExists(false);
-    }
-  }, [sessionCode, role, rooms]);
-
-  useEffect(() => {
-    if (sessionCode && role !== 'workshop') {
-      fetchFromCloud(); // Initial attempt
-      const interval = setInterval(fetchFromCloud, 2000); // More frequent polling
-      const handleStorageChange = (e: StorageEvent) => {
-        if (e.key === `dnd_session_${sessionCode}`) fetchFromCloud();
-      };
-      window.addEventListener('storage', handleStorageChange);
-      return () => {
-        clearInterval(interval);
-        window.removeEventListener('storage', handleStorageChange);
-      };
-    }
-  }, [sessionCode, role, fetchFromCloud]);
-
-  // Auto-sync DM changes
-  useEffect(() => {
-    const isDM = role === 'dm';
-    if (isDM && sessionCode && Object.keys(rooms || {}).length > 0) {
-      syncToCloud({ rooms, activeRoomId, status: encounterStatus, showEnemyHpToPlayers });
-    }
-  }, [rooms, activeRoomId, encounterStatus, role, sessionCode, syncToCloud, showEnemyHpToPlayers]);
-
-  const startHosting = () => {
-    const code = generateCode();
-    const firstId = generateId();
-    const initialRooms = { [firstId]: { id: firstId, name: 'The Entrance', entities: [], gridSettings: { ...INITIAL_GRID_SETTINGS } } };
-    
-    // Explicitly sync to cloud immediately so it's ready for joiners
-    const timestamp = new Date().toISOString();
-    const initialSession: SessionData = {
-      rooms: initialRooms,
-      activeRoomId: firstId,
-      status: 'active',
-      updatedAt: timestamp,
-      showEnemyHpToPlayers: true
-    };
-    
-    localStorage.setItem(`dnd_session_${code}`, JSON.stringify(initialSession));
-    
-    setRooms(initialRooms);
-    setActiveRoomId(firstId);
-    setSessionCode(code);
-    setPlayerName('The Dungeon Master');
-    setRole('dm');
+  // --- Utility Functions ---
+  const notify = (msg: string) => {
+    setNotification(msg);
+    setTimeout(() => setNotification(null), 3000);
   };
 
+  // --- Networking Logic ---
+  
+  const broadcastState = useCallback((forceState?: Partial<SessionData>) => {
+    if (role !== 'dm') return;
+    const data: SessionData = {
+      rooms,
+      activeRoomId,
+      status: encounterStatus,
+      showEnemyHpToPlayers,
+      updatedAt: new Date().toISOString(),
+      ...forceState
+    };
+    
+    // Only broadcast if something meaningful changed
+    const serialized = JSON.stringify(data);
+    if (serialized === lastBroadcastRef.current) return;
+    lastBroadcastRef.current = serialized;
+
+    // Fix: Explicitly cast to DataConnection[] to ensure 'open' and 'send' are accessible.
+    (Object.values(connectionsRef.current) as DataConnection[]).forEach(conn => {
+      if (conn.open) {
+        conn.send({ type: 'STATE_UPDATE', data });
+      }
+    });
+  }, [role, rooms, activeRoomId, encounterStatus, showEnemyHpToPlayers]);
+
   const handleUpdateHp = useCallback((id: string, hp: number) => {
+    if (role === 'member') {
+      connectionsRef.current[`DND-${sessionCode}`]?.send({ 
+        type: 'ACTION_REQUEST', action: 'UPDATE_HP', payload: { id, hp } 
+      });
+      return;
+    }
     setRooms(prev => {
-      if (!activeRoomId || !prev || !prev[activeRoomId]) return prev;
+      if (!activeRoomId || !prev[activeRoomId]) return prev;
       const room = prev[activeRoomId];
       return {
         ...prev,
@@ -198,11 +121,17 @@ const App: React.FC = () => {
         }
       };
     });
-  }, [activeRoomId]);
+  }, [activeRoomId, role, sessionCode]);
 
   const handleUpdateEntity = useCallback((updated: Entity) => {
+    if (role === 'member') {
+      connectionsRef.current[`DND-${sessionCode}`]?.send({ 
+        type: 'ACTION_REQUEST', action: 'UPDATE_ENTITY', payload: updated 
+      });
+      return;
+    }
     setRooms(prev => {
-      if (!activeRoomId || !prev || !prev[activeRoomId]) return prev;
+      if (!activeRoomId || !prev[activeRoomId]) return prev;
       const room = prev[activeRoomId];
       return {
         ...prev,
@@ -212,11 +141,94 @@ const App: React.FC = () => {
         }
       };
     });
-  }, [activeRoomId]);
+  }, [activeRoomId, role, sessionCode]);
+
+  const handleData = useCallback((data: any, conn: DataConnection) => {
+    if (data.type === 'STATE_UPDATE' && role === 'member') {
+      const remote = data.data as SessionData;
+      setRooms(remote.rooms);
+      setActiveRoomId(remote.activeRoomId);
+      setEncounterStatus(remote.status);
+      setShowEnemyHpToPlayers(remote.showEnemyHpToPlayers ?? true);
+      setPeerStatus('connected');
+    }
+
+    if (data.type === 'ACTION_REQUEST' && role === 'dm') {
+      const { action, payload } = data;
+      if (action === 'UPDATE_ENTITY') {
+        handleUpdateEntity(payload);
+      } else if (action === 'UPDATE_HP') {
+        handleUpdateHp(payload.id, payload.hp);
+      }
+    }
+  }, [role, handleUpdateEntity, handleUpdateHp]);
+
+  // Handle URL Entry
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlSession = params.get('session');
+    if (urlSession && !sessionCode) {
+      setSessionCode(urlSession.toUpperCase());
+    }
+  }, [sessionCode]);
+
+  // Init Networking
+  useEffect(() => {
+    if (!sessionCode || role === 'workshop') return;
+
+    const p = new Peer(role === 'dm' ? `DND-${sessionCode}` : undefined, {
+      debug: 1
+    });
+    peerRef.current = p;
+
+    p.on('open', (id) => {
+      setPeerStatus(role === 'dm' ? 'connected' : 'connecting');
+      if (role === 'member') {
+        const conn = p.connect(`DND-${sessionCode}`, { reliable: true });
+        conn.on('open', () => {
+          setPeerStatus('connected');
+          connectionsRef.current[conn.peer] = conn;
+          conn.send({ type: 'JOIN_REQUEST', name: playerName });
+        });
+        conn.on('data', (d) => handleData(d, conn));
+        conn.on('close', () => setPeerStatus('disconnected'));
+      }
+    });
+
+    p.on('connection', (conn) => {
+      conn.on('open', () => {
+        connectionsRef.current[conn.peer] = conn;
+        setConnectedPeers(prev => [...new Set([...prev, conn.peer])]);
+        // Send initial state to new joiner
+        conn.send({ 
+          type: 'STATE_UPDATE', 
+          data: { rooms, activeRoomId, status: encounterStatus, showEnemyHpToPlayers, updatedAt: new Date().toISOString() } 
+        });
+      });
+      conn.on('data', (d) => handleData(d, conn));
+      conn.on('close', () => {
+        setConnectedPeers(prev => prev.filter(id => id !== conn.peer));
+        delete connectionsRef.current[conn.peer];
+      });
+    });
+
+    return () => {
+      p.destroy();
+      connectionsRef.current = {};
+    };
+  }, [sessionCode, role, handleData, playerName, activeRoomId, encounterStatus, rooms, showEnemyHpToPlayers]);
+
+  // Broadcast loop for DM
+  useEffect(() => {
+    if (role === 'dm') broadcastState();
+  }, [rooms, activeRoomId, encounterStatus, showEnemyHpToPlayers, role, broadcastState]);
+
+  // --- Handlers ---
 
   const handleDeleteEntity = useCallback((id: string) => {
+    if (role !== 'dm') return;
     setRooms(prev => {
-      if (!activeRoomId || !prev || !prev[activeRoomId]) return prev;
+      if (!activeRoomId || !prev[activeRoomId]) return prev;
       const room = prev[activeRoomId];
       return {
         ...prev,
@@ -227,55 +239,24 @@ const App: React.FC = () => {
       };
     });
     if (selectedEntityId === id) setSelectedEntityId(null);
-  }, [activeRoomId, selectedEntityId]);
+  }, [activeRoomId, role, selectedEntityId]);
 
-  const createRoom = (name: string, data?: Room) => {
-    const id = data?.id || generateId();
-    const newRoom: Room = data || {
-      id, name, entities: [], gridSettings: { ...INITIAL_GRID_SETTINGS }
-    };
-    setRooms(prev => ({ ...prev, [id]: newRoom }));
-    setActiveRoomId(id);
-    return id;
+  const startHosting = () => {
+    const code = generateCode();
+    const firstId = generateId();
+    const initialRooms = { [firstId]: { id: firstId, name: 'The Entrance', entities: [], gridSettings: { ...INITIAL_GRID_SETTINGS } } };
+    setRooms(initialRooms);
+    setActiveRoomId(firstId);
+    setSessionCode(code);
+    setPlayerName('Dungeon Master');
+    setRole('dm');
   };
 
-  const handleMonsterGeneration = async () => {
-    if (!monsterPrompt || isGeneratingMonster || !currentRoom) return;
-    setIsGeneratingMonster(true);
-    try {
-      const stats = await generateMonster(monsterPrompt);
-      if (stats) {
-        const center = { x: Math.floor(gridSettings.cols / 2), y: Math.floor(gridSettings.rows / 2) };
-        const newEntity: Entity = {
-          id: generateId(),
-          name: stats.name || "Manifestation",
-          type: 'enemy',
-          hp: stats.hp || 10,
-          maxHp: stats.hp || 10,
-          ac: stats.ac || 10,
-          initiative: 10,
-          notes: stats.notes,
-          x: center.x,
-          y: center.y,
-          color: COLORS.enemy,
-          isVisibleToPlayers: true
-        };
-        
-        setRooms(prev => {
-          if (!activeRoomId || !prev || !prev[activeRoomId]) return prev;
-          const room = prev[activeRoomId];
-          return { ...prev, [activeRoomId]: { ...room, entities: [...room.entities, newEntity] } };
-        });
-        setSelectedEntityId(newEntity.id);
-        setMonsterPrompt('');
-        setNotification(`${newEntity.name} Summoned!`);
-      }
-    } catch (e) {
-      setNotification("Void Summoning Failed.");
-    } finally {
-      setIsGeneratingMonster(false);
-      setTimeout(() => setNotification(null), 3000);
-    }
+  const generateMagicLink = () => {
+    if (!sessionCode) return;
+    const url = new URL(window.location.origin + window.location.pathname);
+    url.searchParams.set('session', sessionCode);
+    navigator.clipboard.writeText(url.toString()).then(() => notify("Magic Portal Link Copied!"));
   };
 
   const addEntity = (type: EntityType) => {
@@ -288,11 +269,10 @@ const App: React.FC = () => {
       ac: ENTITY_DEFAULTS.ac, initiative: ENTITY_DEFAULTS.initiative,
       x: center.x, y: center.y, color: COLORS[type], isVisibleToPlayers: true
     };
-    setRooms(prev => {
-      if (!activeRoomId || !prev || !prev[activeRoomId]) return prev;
-      const room = prev[activeRoomId];
-      return { ...prev, [activeRoomId]: { ...room, entities: [...room.entities, newEntity] } };
-    });
+    setRooms(prev => ({
+      ...prev,
+      [activeRoomId]: { ...prev[activeRoomId], entities: [...prev[activeRoomId].entities, newEntity] }
+    }));
     setSelectedEntityId(newEntity.id);
   };
 
@@ -308,28 +288,21 @@ const App: React.FC = () => {
         }
         if (!['player', 'enemy'].includes(placementMode) && placementMode !== 'eraser') {
            const newEntity: Entity = {
-            id: generateId(),
-            name: placementMode.toUpperCase(),
-            type: 'obstacle', subtype: placementMode as any,
-            hp: 1, maxHp: 1, ac: 0, initiative: 0, x, y,
-            color: COLORS[placementMode as keyof typeof COLORS] || '#475569',
-            isVisibleToPlayers: true
+            id: generateId(), name: placementMode.toUpperCase(), type: 'obstacle', subtype: placementMode as any,
+            hp: 1, maxHp: 1, ac: 0, initiative: 0, x, y, isVisibleToPlayers: true,
+            color: COLORS[placementMode as keyof typeof COLORS] || '#475569'
           };
-          setRooms(prev => {
-            if (!activeRoomId || !prev || !prev[activeRoomId]) return prev;
-            const room = prev[activeRoomId];
-            return { ...prev, [activeRoomId]: { ...room, entities: [...room.entities, newEntity] } };
-          });
+          setRooms(prev => ({
+            ...prev,
+            [activeRoomId]: { ...prev[activeRoomId], entities: [...prev[activeRoomId].entities, newEntity] }
+          }));
           return;
         }
       }
       
       if (selectedEntityId) {
         const selected = entities.find(e => e.id === selectedEntityId);
-        if (selected) {
-           handleUpdateEntity({ ...selected, x, y });
-           setSelectedEntityId(null);
-        }
+        if (selected) { handleUpdateEntity({ ...selected, x, y }); setSelectedEntityId(null); }
       } else if (found) {
         setSelectedEntityId(found.id);
       }
@@ -348,102 +321,41 @@ const App: React.FC = () => {
     }
   }, [selectedEntityId, entities, role, playerName, activeRoomId, currentRoom, isFieldEditorOpen, placementMode, handleUpdateEntity, handleDeleteEntity]);
 
-  const logout = () => {
-    setRole(null);
-    setSessionCode('');
-    setRooms({});
-    setActiveRoomId('');
-    sessionStorage.removeItem('dnd_active_session');
-    const url = new URL(window.location.href);
-    url.searchParams.delete('session');
-    url.searchParams.delete('data');
-    window.history.replaceState({}, '', url.toString());
-    setShowLogoutConfirm(false);
-  };
-
-  const startWorkshop = () => {
-    const firstId = generateId();
-    const initialRooms = { [firstId]: { id: firstId, name: 'Main Blueprint', entities: [], gridSettings: { ...INITIAL_GRID_SETTINGS } } };
-    setRooms(initialRooms);
-    setActiveRoomId(firstId);
-    setSessionCode('WORKSHOP');
-    setPlayerName('Architect');
-    setRole('workshop');
-  };
-
-  // Implement the missing generateMagicLink function
-  const generateMagicLink = () => {
-    if (!sessionCode) return;
-    
-    const data: SessionData = {
-      rooms,
-      activeRoomId,
-      status: encounterStatus,
-      updatedAt: new Date().toISOString(),
-      showEnemyHpToPlayers
-    };
-    
+  const handleMonsterGeneration = async () => {
+    if (!monsterPrompt || isGeneratingMonster || !currentRoom) return;
+    setIsGeneratingMonster(true);
     try {
-      const jsonStr = JSON.stringify(data);
-      // Construct a URL safe base64 string
-      const base64Data = btoa(jsonStr).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-      
-      const url = new URL(window.location.origin + window.location.pathname);
-      url.searchParams.set('session', sessionCode);
-      url.searchParams.set('data', base64Data);
-      
-      navigator.clipboard.writeText(url.toString()).then(() => {
-        setNotification("Magic Link Copied to Clipboard!");
-        setTimeout(() => setNotification(null), 3000);
-      }).catch(err => {
-        console.error("Failed to copy link: ", err);
-        setNotification("Failed to copy link to clipboard.");
-        setTimeout(() => setNotification(null), 3000);
-      });
+      const stats = await generateMonster(monsterPrompt);
+      if (stats) {
+        const center = { x: Math.floor(gridSettings.cols / 2), y: Math.floor(gridSettings.rows / 2) };
+        const newEntity: Entity = {
+          id: generateId(), name: stats.name || "Manifestation", type: 'enemy',
+          hp: stats.hp || 10, maxHp: stats.hp || 10, ac: stats.ac || 10,
+          initiative: 10, notes: stats.notes, x: center.x, y: center.y,
+          color: COLORS.enemy, isVisibleToPlayers: true
+        };
+        setRooms(prev => ({
+          ...prev,
+          [activeRoomId]: { ...prev[activeRoomId], entities: [...prev[activeRoomId].entities, newEntity] }
+        }));
+        setSelectedEntityId(newEntity.id);
+        setMonsterPrompt('');
+        notify(`${newEntity.name} Summoned!`);
+      }
     } catch (e) {
-      console.error("Failed to generate magic link", e);
-      setNotification("Error creating link.");
-      setTimeout(() => setNotification(null), 3000);
+      notify("Void Summoning Failed.");
+    } finally {
+      setIsGeneratingMonster(false);
     }
   };
 
-  if (!role) return (
-    <RoleSelection 
-      onSelectDM={startHosting} 
-      onJoin={(c, n) => { 
-        setSessionCode(c.toUpperCase()); 
-        setPlayerName(n); 
-        setRole('member'); 
-      }} 
-      onSelectWorkshop={startWorkshop}
-      initialSessionCode={sessionCode}
-    />
-  );
+  if (!role) return <RoleSelection onSelectDM={startHosting} onJoin={(c, n) => { setSessionCode(c.toUpperCase()); setPlayerName(n); setRole('member'); }} onSelectWorkshop={() => setRole('workshop')} initialSessionCode={sessionCode} />;
 
   return (
     <div className="flex h-screen bg-slate-950 overflow-hidden relative text-white">
       {notification && (
         <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[300] bg-amber-600 text-white px-8 py-3 rounded-full shadow-2xl font-black flex items-center gap-2 animate-bounce border border-amber-400">
            <CheckCircle2 size={18}/> {notification}
-        </div>
-      )}
-
-      {tutorialStep >= 0 && (
-        <TutorialOverlay role={role === 'dm' ? 'dm' : 'member'} currentStep={tutorialStep} onFinish={() => setTutorialStep(-1)} />
-      )}
-
-      {showLogoutConfirm && (
-        <div className="fixed inset-0 z-[700] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-slate-900 border-2 border-red-500 rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl">
-            <div className="flex flex-col items-center text-center space-y-6">
-              <AlertTriangle size={32} className="text-red-500 animate-pulse" />
-              <h2 className="font-medieval text-3xl text-white">Abandon Realm?</h2>
-              <div className="w-full flex flex-col gap-3">
-                <button onClick={logout} className="w-full py-4 bg-red-600 hover:bg-red-500 text-white font-black rounded-2xl uppercase tracking-widest transition-all">LEAVE SESSION</button>
-                <button onClick={() => setShowLogoutConfirm(false)} className="w-full py-3 text-slate-500 font-bold uppercase hover:text-white">STAY</button>
-              </div>
-            </div>
-          </div>
         </div>
       )}
 
@@ -464,8 +376,8 @@ const App: React.FC = () => {
                  </div>
               </div>
               <button onClick={() => {
-                const updated = entities.map(e => e.id === pendingClaimId ? { ...e, claimedBy: playerName, name: playerName, maxHp: claimMaxHp, hp: claimMaxHp, ac: claimAc } : e);
-                setRooms(prev => ({ ...prev, [activeRoomId]: { ...prev[activeRoomId], entities: updated } }));
+                const entity = entities.find(e => e.id === pendingClaimId);
+                if (entity) handleUpdateEntity({ ...entity, claimedBy: playerName, name: playerName, maxHp: claimMaxHp, hp: claimMaxHp, ac: claimAc });
                 setPendingClaimId(null);
               }} className="w-full py-4 bg-green-600 hover:bg-green-500 text-white font-black rounded-2xl uppercase tracking-widest transition-all">ENTER REALM</button>
             </div>
@@ -473,99 +385,47 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {(role === 'dm' || role === 'workshop') && (
-        <>
-          <div className={`fixed left-0 top-1/2 -translate-y-1/2 z-[60] flex items-center transition-all duration-300 ${isFieldEditorOpen ? 'translate-x-[22rem]' : 'translate-x-0'}`}>
-            <button onClick={() => setIsFieldEditorOpen(!isFieldEditorOpen)} className="bg-amber-600 p-2 rounded-r-xl shadow-2xl border-y border-r border-amber-500 hover:bg-amber-500">
-              {isFieldEditorOpen ? <ChevronLeft size={20} className="text-white" /> : <ChevronRight size={20} className="text-white" />}
-            </button>
-          </div>
-          <div className={`fixed inset-y-0 left-0 z-[55] w-[22rem] bg-slate-900 border-r border-slate-700 shadow-2xl transition-transform duration-300 transform ${isFieldEditorOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-            <div className="p-6 h-full flex flex-col space-y-6 overflow-y-auto custom-scrollbar">
-              <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
-                {role === 'workshop' ? <Hammer className="text-emerald-500" size={24} /> : <Settings2 className="text-amber-500" size={24} />}
-                <h2 className="font-medieval text-xl tracking-tight">{role === 'workshop' ? 'Architect' : 'World Forge'}</h2>
-              </div>
-
-              <div className="space-y-3">
-                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex justify-between items-center">
-                  Rooms {role === 'workshop' && <button onClick={() => createRoom(`Room ${Object.keys(rooms).length + 1}`)} className="p-1 hover:bg-slate-800 rounded text-amber-500 transition-colors"><Plus size={14}/></button>}
-                </h3>
-                <div className="space-y-2">
-                  {rooms && Object.values(rooms).map((room: Room) => (
-                    <div key={room.id} className={`flex items-center justify-between p-2 rounded-lg border ${activeRoomId === room.id ? 'bg-amber-600/20 border-amber-500' : 'bg-slate-800 border-slate-700'}`}>
-                      <button onClick={() => setActiveRoomId(room.id)} className="text-xs font-bold truncate flex-1 text-left">{room.name}</button>
-                      {role === 'workshop' && Object.keys(rooms).length > 1 && <button onClick={() => {
-                        const nextRooms = { ...rooms };
-                        delete nextRooms[room.id];
-                        setRooms(nextRooms);
-                        if (activeRoomId === room.id) setActiveRoomId(Object.keys(nextRooms)[0]);
-                      }} className="text-red-500 ml-2 hover:bg-red-900/20 p-1 rounded"><Trash2 size={12}/></button>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Brushes</h3>
-                <div className="grid grid-cols-3 gap-2">
-                  {['wall', 'lava', 'water', 'grass', 'eraser'].map(brush => (
-                    <button key={brush} onClick={() => setPlacementMode(brush)} className={`p-2 rounded-lg border text-[10px] font-bold capitalize transition-all ${placementMode === brush ? 'bg-amber-600 border-amber-500 shadow-lg scale-105' : 'bg-slate-800 border-slate-700'}`}>{brush}</button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-auto pt-4 border-t border-slate-800 space-y-4">
-                <div className="space-y-2">
-                  <h3 className="text-[10px] font-black text-amber-500 uppercase tracking-widest flex items-center gap-2">
-                    <Sparkles size={12}/> Monster Weaver
-                  </h3>
-                  <div className="relative">
-                    <input type="text" value={monsterPrompt} onChange={e => setMonsterPrompt(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleMonsterGeneration()} placeholder="Describe a beast..." className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white pr-10 outline-none focus:border-amber-500 transition-all"/>
-                    <button onClick={handleMonsterGeneration} disabled={isGeneratingMonster || !monsterPrompt} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-amber-500 disabled:opacity-30">
-                      {isGeneratingMonster ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-
       <aside className={`bg-slate-900 border-r-2 border-slate-800 transition-all duration-300 flex flex-col z-30 shadow-2xl ${isSidebarOpen ? 'w-96' : 'w-0'}`}>
         {isSidebarOpen && (
           <div className="flex flex-col h-full overflow-hidden">
             <div className="p-6 border-b-2 border-slate-800 flex justify-between items-center bg-slate-900/50">
                 <h1 className="font-medieval text-xl text-amber-500 flex items-center gap-3">
-                  {role === 'dm' ? <Shield size={24}/> : (role === 'workshop' ? <Hammer size={24}/> : <Sword size={24} />)} 
+                  {role === 'dm' ? <Shield size={24}/> : <Sword size={24} />} 
                   {playerName?.split(' ')[0] || 'Unknown'}
                 </h1>
                 <div className="flex items-center gap-2">
-                   {role !== 'workshop' && (
-                     <div title={sessionExists ? "Synced" : "Offline Mode"}>
-                       {sessionExists ? <Wifi size={16} className="text-green-500" /> : <WifiOff size={16} className="text-red-500 animate-pulse" />}
-                     </div>
-                   )}
+                   <div className={`w-3 h-3 rounded-full status-pulse ${peerStatus === 'connected' ? 'bg-green-500' : peerStatus === 'connecting' ? 'bg-amber-500' : 'bg-red-500'}`} />
                    <button onClick={() => setShowLogoutConfirm(true)} className="text-slate-500 hover:text-red-500 ml-2 transition-colors"><LogOut size={18} /></button>
                 </div>
             </div>
             
             <div className="flex-1 overflow-y-auto p-5 space-y-4 pb-24 custom-scrollbar">
-              {(role === 'dm' || role === 'workshop') && currentRoom && (
+              {role === 'dm' && (
+                <div className="bg-slate-800/40 border border-slate-700 p-3 rounded-xl mb-4">
+                  <h3 className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-1"><Users size={10}/> Party Pulse</h3>
+                  <div className="flex flex-wrap gap-2">
+                     {connectedPeers.length === 0 ? <span className="text-[10px] text-slate-600 italic">No heroes present...</span> : connectedPeers.map(p => (
+                       <div key={p} className="bg-green-600/10 border border-green-500/30 text-green-500 text-[8px] px-2 py-1 rounded-full font-bold">HERO-{p.slice(-4)}</div>
+                     ))}
+                  </div>
+                </div>
+              )}
+
+              {role === 'dm' && currentRoom && (
                 <div className="grid grid-cols-2 gap-2 mb-4">
                   <button onClick={() => addEntity('player')} className="p-3 bg-green-900/20 border border-green-600/30 rounded-xl text-green-400 text-[10px] font-black hover:bg-green-900/30">Hero Slot</button>
                   <button onClick={() => addEntity('enemy')} className="p-3 bg-red-900/20 border border-red-600/30 rounded-xl text-red-400 text-[10px] font-black hover:bg-red-900/30">Monster Slot</button>
                 </div>
               )}
+
               <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{currentRoom ? `Presence in ${currentRoom.name}` : 'Void'}</h3>
               <div className="space-y-3">
                 {entities.filter(e => e.type !== 'obstacle').map(entity => (
                   <EntityCard 
                     key={entity.id} entity={entity} entities={entities} isSelected={selectedEntityId === entity.id} 
                     onSelect={setSelectedEntityId} onUpdateHp={handleUpdateHp} onUpdateEntity={handleUpdateEntity} 
-                    onDelete={handleDeleteEntity} onEdit={() => {}} canEdit={role === 'dm' || role === 'workshop' || entity.claimedBy === playerName} 
-                    role={role === 'dm' || role === 'workshop' ? 'dm' : 'member'} showEnemyHpToPlayers={showEnemyHpToPlayers} playerName={playerName}
+                    onDelete={handleDeleteEntity} onEdit={() => {}} canEdit={role === 'dm' || entity.claimedBy === playerName} 
+                    role={role === 'dm' ? 'dm' : 'member'} showEnemyHpToPlayers={showEnemyHpToPlayers} playerName={playerName}
                   />
                 ))}
               </div>
@@ -574,25 +434,21 @@ const App: React.FC = () => {
         )}
       </aside>
 
-      <main className="flex-1 flex flex-col relative" ref={containerRef}>
-        <header className="p-4 border-b border-slate-800 bg-slate-900 flex justify-between items-center z-20 shadow-md">
+      <main className="flex-1 flex flex-col relative">
+        <header className="p-4 border-b border-slate-800 bg-slate-900 flex justify-between items-center z-20">
            <div className="flex items-center gap-4">
-              <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 text-slate-400 hover:text-amber-500 transition-colors"><ChevronLeft size={20}/></button>
-              {role === 'dm' && (
-                 <button onClick={generateMagicLink} className="flex items-center gap-2 bg-amber-600/20 hover:bg-amber-600/40 text-amber-500 border border-amber-600/30 px-4 py-2 rounded-xl text-[10px] font-black tracking-widest transition-all shadow-lg active:scale-95">
-                    <Share2 size={14}/> MAGIC PORTAL LINK
-                 </button>
-              )}
+              <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 text-slate-400 hover:text-amber-500"><ChevronLeft size={20}/></button>
+              {role === 'dm' && <button onClick={generateMagicLink} className="flex items-center gap-2 bg-amber-600/20 hover:bg-amber-600/40 text-amber-500 border border-amber-600/30 px-4 py-2 rounded-xl text-[10px] font-black tracking-widest"><Share2 size={14}/> MAGIC PORTAL</button>}
            </div>
            
-           <div className="flex flex-col items-center bg-black/40 px-6 py-2 rounded-2xl border border-slate-700/50 shadow-inner">
-             <span className="text-[10px] text-amber-500 font-black uppercase tracking-[0.2em]">{role === 'workshop' ? 'Blueprints' : 'Realm Key'}</span>
+           <div className="flex flex-col items-center bg-black/40 px-6 py-2 rounded-2xl border border-slate-700/50">
+             <span className="text-[10px] text-amber-500 font-black uppercase tracking-[0.2em]">Realm Key</span>
              <span className="text-xl font-medieval text-white tracking-[0.2em]">{sessionCode}</span>
            </div>
            
            <div className="flex gap-2">
-             <button onClick={() => setZoom(z => Math.max(0.2, z - 0.1))} className="p-2 text-slate-400 hover:text-white transition-colors"><ZoomOut size={16} /></button>
-             <button onClick={() => setZoom(z => Math.min(1.5, z + 0.1))} className="p-2 text-slate-400 hover:text-white transition-colors"><ZoomIn size={16} /></button>
+             <button onClick={() => setZoom(z => Math.max(0.2, z - 0.1))} className="p-2 text-slate-400 hover:text-white"><ZoomOut size={16} /></button>
+             <button onClick={() => setZoom(z => Math.min(1.5, z + 0.1))} className="p-2 text-slate-400 hover:text-white"><ZoomIn size={16} /></button>
            </div>
         </header>
 
@@ -601,28 +457,72 @@ const App: React.FC = () => {
              <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }} className="transition-transform duration-300">
                <GridMap 
                   entities={entities} settings={gridSettings} selectedEntityId={selectedEntityId} 
-                  onCellClick={handleCellClick} role={role === 'dm' || role === 'workshop' ? 'dm' : 'member'} 
+                  onCellClick={handleCellClick} role={role === 'dm' ? 'dm' : 'member'} 
                   showEnemyHpToPlayers={showEnemyHpToPlayers} isEditorOpen={isFieldEditorOpen} localPlayerName={playerName}
                />
              </div>
            ) : (
              <div className="flex flex-col items-center justify-center text-center p-12 max-w-lg space-y-6">
                <div className="w-32 h-32 bg-slate-900 rounded-full border-4 border-slate-800 flex items-center justify-center mb-4 shadow-2xl">
-                 <MapIcon size={64} className="text-slate-700 opacity-20" />
+                 {peerStatus === 'connecting' ? <Loader2 size={64} className="text-amber-500 animate-spin" /> : <MapIcon size={64} className="text-slate-700 opacity-20" />}
                </div>
-               <h2 className="font-medieval text-4xl text-slate-400">Realm Null</h2>
+               <h2 className="font-medieval text-4xl text-slate-400">{peerStatus === 'connecting' ? 'Traversing the Void' : 'Realm Null'}</h2>
                <p className="text-slate-500 leading-relaxed font-bold uppercase text-xs tracking-widest">
-                 {sessionExists === false 
-                   ? `Searching for Realm [${sessionCode}]...` 
-                   : (role === 'dm' ? "Initializing the world..." : "Connecting to Master's manifest...")}
+                 {role === 'dm' ? "Initializing the world..." : `Connecting to Realm [${sessionCode}]...`}
                </p>
-               {!sessionExists && role === 'member' && (
-                 <p className="text-[10px] text-amber-500 font-black animate-pulse">Ensure the Dungeon Master has clicked "START SESSION" in their window.</p>
+               {peerStatus === 'disconnected' && role === 'member' && (
+                 <p className="text-[10px] text-amber-500 font-black animate-pulse">Ensure the Dungeon Master is online and the Realm is open.</p>
                )}
              </div>
            )}
         </div>
+
+        {role === 'dm' && (
+           <>
+            <button onClick={() => setIsFieldEditorOpen(!isFieldEditorOpen)} className={`fixed left-0 top-1/2 -translate-y-1/2 z-[60] bg-amber-600 p-2 rounded-r-xl shadow-2xl transition-all ${isFieldEditorOpen ? 'translate-x-[22rem]' : 'translate-x-0'}`}>
+              {isFieldEditorOpen ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
+            </button>
+            <div className={`fixed inset-y-0 left-0 z-[55] w-[22rem] bg-slate-900 border-r border-slate-700 shadow-2xl transition-transform duration-300 transform ${isFieldEditorOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+              <div className="p-6 h-full flex flex-col space-y-6 overflow-y-auto custom-scrollbar">
+                <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
+                  <Settings2 className="text-amber-500" size={24} />
+                  <h2 className="font-medieval text-xl">World Forge</h2>
+                </div>
+                <div className="space-y-3">
+                  <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Brushes</h3>
+                  <div className="grid grid-cols-3 gap-2">
+                    {['wall', 'lava', 'water', 'grass', 'eraser'].map(brush => (
+                      <button key={brush} onClick={() => setPlacementMode(brush)} className={`p-2 rounded-lg border text-[10px] font-bold capitalize transition-all ${placementMode === brush ? 'bg-amber-600 border-amber-500 shadow-lg scale-105' : 'bg-slate-800 border-slate-700'}`}>{brush}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="mt-auto pt-4 border-t border-slate-800">
+                  <h3 className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-2">Monster Weaver</h3>
+                  <div className="relative">
+                    <input type="text" value={monsterPrompt} onChange={e => setMonsterPrompt(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleMonsterGeneration()} placeholder="Describe a beast..." className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs outline-none focus:border-amber-500"/>
+                    <button onClick={handleMonsterGeneration} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-amber-500">
+                      {isGeneratingMonster ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+           </>
+        )}
       </main>
+
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 z-[700] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border-2 border-red-500 rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl text-center space-y-6">
+            <AlertTriangle size={32} className="text-red-500 mx-auto animate-pulse" />
+            <h2 className="font-medieval text-3xl">Sever Realm Link?</h2>
+            <div className="flex flex-col gap-3">
+              <button onClick={() => window.location.reload()} className="py-4 bg-red-600 text-white font-black rounded-2xl uppercase tracking-widest">DISCONNECT</button>
+              <button onClick={() => setShowLogoutConfirm(false)} className="py-3 text-slate-500 font-bold uppercase hover:text-white">REMAIN</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
