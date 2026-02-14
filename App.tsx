@@ -29,10 +29,11 @@ import {
   Share2,
   ZoomIn,
   ZoomOut,
-  Users
+  Users,
+  RefreshCw
 } from 'lucide-react';
 
-const PERSISTENCE_KEY = 'vtt_session_data';
+const PERSISTENCE_KEY = 'vtt_session_data_v2';
 
 const App: React.FC = () => {
   // --- Core State ---
@@ -55,17 +56,19 @@ const App: React.FC = () => {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [monsterPrompt, setMonsterPrompt] = useState('');
   const [isGeneratingMonster, setIsGeneratingMonster] = useState(false);
-  const [tutorialStep, setTutorialStep] = useState<number>(-1);
   const [pendingClaimId, setPendingClaimId] = useState<string | null>(null);
   const [claimMaxHp, setClaimMaxHp] = useState<number>(ENTITY_DEFAULTS.maxHp);
   const [claimAc, setClaimAc] = useState<number>(ENTITY_DEFAULTS.ac);
 
   // --- Networking State & Refs ---
-  const [peerStatus, setPeerStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  const [peerStatus, setPeerStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'reconnecting'>('disconnected');
   const [connectedPeers, setConnectedPeers] = useState<string[]>([]);
   const peerRef = useRef<Peer | null>(null);
   const connectionsRef = useRef<Record<string, DataConnection>>({});
   const lastBroadcastRef = useRef<string>('');
+  const reconnectTimeoutRef = useRef<number | null>(null);
+  const heartbeatIntervalRef = useRef<number | null>(null);
+  const isDestroyingRef = useRef(false);
   
   const handlersRef = useRef({
     setRooms,
@@ -91,30 +94,43 @@ const App: React.FC = () => {
     };
   }, [role, sessionCode, playerName]);
 
-  // --- Session Hydration (Load from LocalStorage) ---
+  // --- Session Hydration ---
   useEffect(() => {
     const saved = localStorage.getItem(PERSISTENCE_KEY);
     if (saved) {
       try {
-        const { role: sRole, sessionCode: sCode, playerName: sName } = JSON.parse(saved);
-        if (sRole && sCode && sName) {
-          setRole(sRole);
-          setSessionCode(sCode);
-          setPlayerName(sName);
+        const data = JSON.parse(saved);
+        if (data.role && data.sessionCode) {
+          setRole(data.role);
+          setSessionCode(data.sessionCode);
+          setPlayerName(data.playerName || '');
+          if (data.role === 'dm' && data.rooms) {
+            setRooms(data.rooms);
+            setActiveRoomId(data.activeRoomId);
+            setEncounterStatus(data.status || 'active');
+            setShowEnemyHpToPlayers(data.showEnemyHpToPlayers ?? true);
+          }
         }
       } catch (e) {
-        console.error("Failed to restore session", e);
+        console.error("Persistence Restore Error", e);
       }
     }
     setIsRestoring(false);
   }, []);
 
-  // --- Save Session Data ---
+  // --- State Persistence ---
   useEffect(() => {
-    if (role && sessionCode && playerName) {
-      localStorage.setItem(PERSISTENCE_KEY, JSON.stringify({ role, sessionCode, playerName }));
+    if (role && sessionCode) {
+      const dataToSave: any = { role, sessionCode, playerName };
+      if (role === 'dm') {
+        dataToSave.rooms = rooms;
+        dataToSave.activeRoomId = activeRoomId;
+        dataToSave.status = encounterStatus;
+        dataToSave.showEnemyHpToPlayers = showEnemyHpToPlayers;
+      }
+      localStorage.setItem(PERSISTENCE_KEY, JSON.stringify(dataToSave));
     }
-  }, [role, sessionCode, playerName]);
+  }, [role, sessionCode, playerName, rooms, activeRoomId, encounterStatus, showEnemyHpToPlayers]);
 
   const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
   const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -130,7 +146,7 @@ const App: React.FC = () => {
 
   const handleUpdateHpLocal = useCallback((id: string, hp: number) => {
     setRooms(prev => {
-      const targetRoomId = activeRoomId;
+      const targetRoomId = handlersRef.current.role === 'dm' ? activeRoomId : Object.keys(prev)[0];
       if (!targetRoomId || !prev[targetRoomId]) return prev;
       return {
         ...prev,
@@ -144,12 +160,13 @@ const App: React.FC = () => {
 
   const handleUpdateEntityLocal = useCallback((updated: Entity) => {
     setRooms(prev => {
-      if (!activeRoomId || !prev[activeRoomId]) return prev;
+      const targetRoomId = handlersRef.current.role === 'dm' ? activeRoomId : Object.keys(prev)[0];
+      if (!targetRoomId || !prev[targetRoomId]) return prev;
       return {
         ...prev,
-        [activeRoomId]: {
-          ...prev[activeRoomId],
-          entities: prev[activeRoomId].entities.map(e => e.id === updated.id ? updated : e)
+        [targetRoomId]: {
+          ...prev[targetRoomId],
+          entities: prev[targetRoomId].entities.map(e => e.id === updated.id ? updated : e)
         }
       };
     });
@@ -199,15 +216,37 @@ const App: React.FC = () => {
     });
   }, [role, rooms, activeRoomId, encounterStatus, showEnemyHpToPlayers]);
 
-  useEffect(() => {
+  // --- Networking Core ---
+  const initNetworking = useCallback(() => {
     if (!sessionCode || role === 'workshop') return;
+    if (isDestroyingRef.current) return;
+
+    // Aggressive cleanup
+    if (peerRef.current) {
+      peerRef.current.destroy();
+      peerRef.current = null;
+    }
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+    }
 
     const peerId = role === 'dm' ? `DND-${sessionCode}` : undefined;
-    const p = new Peer(peerId, { debug: 1 });
+    
+    const p = new Peer(peerId, { 
+      debug: 1, // Only critical logs
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' }
+        ]
+      }
+    });
     peerRef.current = p;
 
     const processData = (data: any) => {
       const { setRooms, setActiveRoomId, setEncounterStatus, setShowEnemyHpToPlayers, setPeerStatus, role: currentRole } = handlersRef.current;
+      if (data.type === 'HEARTBEAT') return;
 
       if (data.type === 'STATE_UPDATE' && currentRole === 'member') {
         const remote = data.data as SessionData;
@@ -228,44 +267,121 @@ const App: React.FC = () => {
       }
     };
 
-    p.on('open', () => {
+    const attemptMemberJoin = () => {
+      if (!p || p.destroyed || p.disconnected) return;
+      const conn = p.connect(`DND-${sessionCode}`, { reliable: true });
+      
+      conn.on('open', () => {
+        setPeerStatus('connected');
+        connectionsRef.current[conn.peer] = conn;
+        conn.send({ type: 'JOIN_REQUEST', name: handlersRef.current.playerName });
+      });
+
+      conn.on('data', processData);
+
+      conn.on('close', () => {
+        if (!isDestroyingRef.current) {
+          setPeerStatus('reconnecting');
+          delete connectionsRef.current[conn.peer];
+          // Exponentially spaced retries
+          if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+          reconnectTimeoutRef.current = window.setTimeout(attemptMemberJoin, 5000);
+        }
+      });
+
+      conn.on('error', (err) => {
+        console.error("Data Channel Error:", err);
+        setPeerStatus('disconnected');
+      });
+    };
+
+    p.on('open', (id) => {
+      console.log('Peer signaling open. ID:', id);
       setPeerStatus(role === 'dm' ? 'connected' : 'connecting');
-      if (role === 'member') {
-        const conn = p.connect(`DND-${sessionCode}`, { reliable: true });
-        conn.on('open', () => {
-          setPeerStatus('connected');
-          connectionsRef.current[conn.peer] = conn;
-          conn.send({ type: 'JOIN_REQUEST', name: handlersRef.current.playerName });
-        });
-        conn.on('data', (d) => processData(d));
-        conn.on('close', () => setPeerStatus('disconnected'));
-        conn.on('error', () => setPeerStatus('disconnected'));
-      }
+      if (role === 'member') attemptMemberJoin();
+
+      // Reliable heartbeat for both DM and members
+      heartbeatIntervalRef.current = window.setInterval(() => {
+        if (!p || p.destroyed) return;
+        
+        if (p.disconnected) {
+          console.warn("Signaling disconnected. Attempting socket reconnect...");
+          p.reconnect();
+        } else if (p.open) {
+          // Send HEARTBEAT to all active P2P connections to keep data channels alive
+          (Object.values(connectionsRef.current) as DataConnection[]).forEach(c => {
+            if (c.open) c.send({ type: 'HEARTBEAT' });
+          });
+        }
+      }, 15000);
     });
 
     p.on('connection', (conn) => {
       conn.on('open', () => {
         connectionsRef.current[conn.peer] = conn;
         setConnectedPeers(prev => [...new Set([...prev, conn.peer])]);
+        if (handlersRef.current.role === 'dm') broadcastState(); 
       });
-      conn.on('data', (d) => processData(d));
+      conn.on('data', processData);
       conn.on('close', () => {
         setConnectedPeers(prev => prev.filter(id => id !== conn.peer));
         delete connectionsRef.current[conn.peer];
       });
     });
 
+    p.on('disconnected', () => {
+      if (isDestroyingRef.current) return;
+      console.warn("Lost connection to signaling server. Attempting reconnection...");
+      setPeerStatus('reconnecting');
+      p.reconnect();
+    });
+
+    p.on('error', (err) => {
+      console.error("PeerJS signaling error:", err.type, err);
+      
+      const isFatal = err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error';
+      const isIdOccupied = err.type === 'unavailable-id';
+
+      if (isFatal || isIdOccupied) {
+        setPeerStatus('reconnecting');
+        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+        
+        // Wait then cycle the entire instance (PeerJS best practice for fatal signaling errors)
+        reconnectTimeoutRef.current = window.setTimeout(() => {
+          if (!isDestroyingRef.current) {
+            initNetworking();
+          }
+        }, isIdOccupied ? 10000 : 5000); // Wait longer if ID is taken (likely a ghost session from refresh)
+      }
+
+      if (err.type === 'peer-not-found' && role === 'member') {
+        setPeerStatus('disconnected');
+        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = window.setTimeout(attemptMemberJoin, 10000);
+      }
+    });
+
+  }, [sessionCode, role, handleUpdateEntityLocal, handleUpdateHpLocal, broadcastState]);
+
+  useEffect(() => {
+    isDestroyingRef.current = false;
+    initNetworking();
     return () => {
-      p.destroy();
-      peerRef.current = null;
-      connectionsRef.current = {};
+      isDestroyingRef.current = true;
+      if (peerRef.current) {
+        peerRef.current.destroy();
+        peerRef.current = null;
+      }
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
     };
-  }, [sessionCode, role, handleUpdateEntityLocal, handleUpdateHpLocal]);
+  }, [sessionCode, role, initNetworking]);
 
   useEffect(() => {
     if (role === 'dm') broadcastState();
   }, [rooms, activeRoomId, encounterStatus, showEnemyHpToPlayers, role, broadcastState]);
 
+  // Handle URL Entry
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlSession = params.get('session');
@@ -274,6 +390,7 @@ const App: React.FC = () => {
     }
   }, [sessionCode]);
 
+  // --- Logic Handlers ---
   const handleDeleteEntity = useCallback((id: string) => {
     if (role !== 'dm') return;
     setRooms(prev => {
@@ -398,20 +515,24 @@ const App: React.FC = () => {
   };
 
   const handleLogout = () => {
+    isDestroyingRef.current = true;
     localStorage.removeItem(PERSISTENCE_KEY);
     setRole(null);
     setSessionCode('');
     setPlayerName('');
     setRooms({});
     setPeerStatus('disconnected');
-    if (peerRef.current) peerRef.current.destroy();
+    if (peerRef.current) {
+      peerRef.current.destroy();
+      peerRef.current = null;
+    }
     setShowLogoutConfirm(false);
   };
 
   if (isRestoring) return (
     <div className="h-screen bg-slate-950 flex items-center justify-center flex-col gap-4 text-white">
       <Loader2 size={48} className="text-amber-500 animate-spin" />
-      <span className="font-medieval text-xl tracking-widest animate-pulse uppercase">Restoring Realm Link...</span>
+      <span className="font-medieval text-xl tracking-widest animate-pulse uppercase">Restoring the Weave...</span>
     </div>
   );
 
@@ -460,7 +581,12 @@ const App: React.FC = () => {
                   {playerName?.split(' ')[0] || 'Unknown'}
                 </h1>
                 <div className="flex items-center gap-2">
-                   <div className={`w-3 h-3 rounded-full status-pulse ${peerStatus === 'connected' ? 'bg-green-500' : peerStatus === 'connecting' ? 'bg-amber-500' : 'bg-red-500'}`} />
+                   <div className={`w-3 h-3 rounded-full status-pulse ${peerStatus === 'connected' ? 'bg-green-500' : (peerStatus === 'reconnecting' || peerStatus === 'connecting') ? 'bg-amber-500' : 'bg-red-500'}`} title={`Peer Status: ${peerStatus}`} />
+                   {(peerStatus === 'reconnecting' || peerStatus === 'disconnected') && (
+                     <button onClick={() => initNetworking()} className="text-amber-500 hover:text-amber-400 p-1" title="Force Reconnect">
+                       <RefreshCw size={14} className={peerStatus === 'reconnecting' ? 'animate-spin' : ''} />
+                     </button>
+                   )}
                    <button onClick={() => setShowLogoutConfirm(true)} className="text-slate-500 hover:text-red-500 ml-2 transition-colors"><LogOut size={18} /></button>
                 </div>
             </div>
@@ -530,11 +656,13 @@ const App: React.FC = () => {
            ) : (
              <div className="flex flex-col items-center justify-center text-center p-12 max-w-lg space-y-6">
                <div className="w-32 h-32 bg-slate-900 rounded-full border-4 border-slate-800 flex items-center justify-center mb-4 shadow-2xl">
-                 {peerStatus === 'connecting' ? <Loader2 size={64} className="text-amber-500 animate-spin" /> : <MapIcon size={64} className="text-slate-700 opacity-20" />}
+                 {(peerStatus === 'connecting' || peerStatus === 'reconnecting') ? <Loader2 size={64} className="text-amber-500 animate-spin" /> : <MapIcon size={64} className="text-slate-700 opacity-20" />}
                </div>
-               <h2 className="font-medieval text-4xl text-slate-400">{peerStatus === 'connecting' ? 'Traversing the Void' : 'Realm Null'}</h2>
+               <h2 className="font-medieval text-4xl text-slate-400">
+                 {peerStatus === 'reconnecting' ? 'Restoring the Weave' : (peerStatus === 'connecting' ? 'Traversing the Void' : 'Realm Null')}
+               </h2>
                <p className="text-slate-500 leading-relaxed font-bold uppercase text-xs tracking-widest">
-                 {role === 'dm' ? "Initializing the world..." : `Connecting to Realm [${sessionCode}]...`}
+                 {peerStatus === 'reconnecting' ? 'Signaling server lost. Re-establishing link...' : (role === 'dm' ? "Initializing the world..." : `Connecting to Realm [${sessionCode}]...`)}
                </p>
                {peerStatus === 'disconnected' && role === 'member' && (
                  <p className="text-[10px] text-amber-500 font-black animate-pulse">Ensure the Dungeon Master is online and the Realm is open.</p>
