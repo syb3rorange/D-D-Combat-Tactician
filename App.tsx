@@ -52,7 +52,9 @@ import {
   Check,
   Archive,
   Compass,
-  AlertTriangle
+  AlertTriangle,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -66,10 +68,10 @@ const App: React.FC = () => {
   const [placementMode, setPlacementMode] = useState<string | null>(null);
   const [showEnemyHpToPlayers, setShowEnemyHpToPlayers] = useState(true);
   const [notification, setNotification] = useState<string | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [sessionExists, setSessionExists] = useState<boolean | null>(null); // null = checking, true = found, false = not found
   
   const [rooms, setRooms] = useState<Record<string, Room>>({});
   const [activeRoomId, setActiveRoomId] = useState<string>('');
@@ -81,6 +83,7 @@ const App: React.FC = () => {
   const [claimAc, setClaimAc] = useState<number>(10);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastUpdateRef = useRef<string>(new Date().toISOString());
 
   const generateCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
   const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -112,29 +115,47 @@ const App: React.FC = () => {
   const syncToCloud = useCallback((data: Partial<SessionData>) => {
     if (!sessionCode || role === 'workshop') return;
     const storageKey = `dnd_session_${sessionCode}`;
+    const timestamp = new Date().toISOString();
+    
     const existingRaw = localStorage.getItem(storageKey);
     const existing: SessionData = existingRaw ? JSON.parse(existingRaw) : {
       rooms: {},
       activeRoomId: '',
       status: 'active',
-      updatedAt: new Date().toISOString(),
+      updatedAt: timestamp,
       showEnemyHpToPlayers: true
     };
-    const updated: SessionData = { ...existing, ...data, updatedAt: new Date().toISOString() };
+    
+    const updated: SessionData = { 
+      ...existing, 
+      ...data, 
+      updatedAt: timestamp 
+    };
+    
+    lastUpdateRef.current = timestamp;
     localStorage.setItem(storageKey, JSON.stringify(updated));
+    setSessionExists(true);
   }, [sessionCode, role]);
 
   const fetchFromCloud = useCallback(() => {
-    // Prevent fetching while transitioning to avoid data race
     if (!sessionCode || role === 'workshop' || isTransitioning) return;
     const storageKey = `dnd_session_${sessionCode}`;
     const rawData = localStorage.getItem(storageKey);
+    
     if (rawData) {
       const data: SessionData = JSON.parse(rawData);
-      setRooms(data.rooms || {});
-      setActiveRoomId(data.activeRoomId);
-      setEncounterStatus(data.status);
-      setShowEnemyHpToPlayers(data.showEnemyHpToPlayers ?? true);
+      setSessionExists(true);
+      
+      // Only apply if cloud data is newer than what we last sent/received
+      if (data.updatedAt > lastUpdateRef.current) {
+        lastUpdateRef.current = data.updatedAt;
+        setRooms(data.rooms || {});
+        setActiveRoomId(data.activeRoomId);
+        setEncounterStatus(data.status);
+        setShowEnemyHpToPlayers(data.showEnemyHpToPlayers ?? true);
+      }
+    } else {
+      setSessionExists(false);
     }
   }, [sessionCode, role, isTransitioning]);
 
@@ -150,14 +171,18 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (sessionCode && role !== 'workshop') {
-      fetchFromCloud();
-      const interval = setInterval(fetchFromCloud, 10000); 
+      fetchFromCloud(); // Initial fetch
+      const interval = setInterval(fetchFromCloud, 3000); // Polling every 3s
       return () => clearInterval(interval);
     }
   }, [sessionCode, role, fetchFromCloud]);
 
   useEffect(() => {
-    if ((role === 'dm' || role === 'member') && sessionCode && Object.keys(rooms).length > 0 && !isTransitioning) {
+    // Only DM or Member should sync. Members only sync if they have at least one room to prevent clearing DM data.
+    const isDM = role === 'dm';
+    const isMemberWithData = role === 'member' && Object.keys(rooms).length > 0;
+    
+    if ((isDM || isMemberWithData) && sessionCode && !isTransitioning) {
       syncToCloud({ 
         rooms, 
         activeRoomId, 
@@ -166,6 +191,13 @@ const App: React.FC = () => {
       });
     }
   }, [rooms, activeRoomId, encounterStatus, role, sessionCode, syncToCloud, showEnemyHpToPlayers, isTransitioning]);
+
+  // Initial Sync for DM to mark session as existing
+  useEffect(() => {
+    if (role === 'dm' && sessionCode) {
+      syncToCloud({ updatedAt: new Date().toISOString() });
+    }
+  }, [role, sessionCode, syncToCloud]);
 
   const fitToScreen = useCallback(() => {
     if (!containerRef.current || !currentRoom) return;
@@ -462,7 +494,7 @@ const App: React.FC = () => {
                   setTimeout(() => {
                     setIsTransitioning(false);
                     setNotification(null);
-                  }, 400); // Give React a beat to render before revealing
+                  }, 400); 
                 }, 800);
               }
             }
@@ -509,6 +541,9 @@ const App: React.FC = () => {
   const confirmLogout = () => {
     setRole(null);
     setSessionCode('');
+    setRooms({});
+    setActiveRoomId('');
+    setSessionExists(null);
     sessionStorage.removeItem('dnd_active_session');
     setShowLogoutConfirm(false);
   };
@@ -519,7 +554,13 @@ const App: React.FC = () => {
         const code = generateCode(); setSessionCode(code); setRole('dm'); setPlayerName('The Dungeon Master');
         setRooms({}); setActiveRoomId('');
       }} 
-      onJoin={(c, n) => { setSessionCode(c.toUpperCase()); setPlayerName(n); setRole('member'); }} 
+      onJoin={(c, n) => { 
+        const upperCode = c.toUpperCase();
+        setSessionCode(upperCode); 
+        setPlayerName(n); 
+        setRole('member'); 
+        setSessionExists(null); // Reset existence check for new join
+      }} 
       onSelectWorkshop={() => {
         setRole('workshop'); setSessionCode('WORKSHOP'); setPlayerName('Architect');
         const id = generateId(); setRooms({ [id]: { id, name: 'New Blueprint', entities: [], gridSettings: { ...INITIAL_GRID_SETTINGS } } }); setActiveRoomId(id);
@@ -767,7 +808,14 @@ const App: React.FC = () => {
                   {role === 'workshop' ? <Hammer size={24} /> : <Sword size={24} />} 
                   {role === 'dm' ? 'Dungeon Master' : (role === 'workshop' ? 'Map Architect' : 'The Hero')}
                 </h1>
-                <button onClick={() => setShowLogoutConfirm(true)} className="text-slate-500 hover:text-red-500 transition-colors"><LogOut size={18} /></button>
+                <div className="flex items-center gap-2">
+                   {role !== 'workshop' && (
+                     <div title={sessionExists ? "Synced with Cloud" : "Connecting..."}>
+                       {sessionExists ? <Wifi size={16} className="text-green-500" /> : <WifiOff size={16} className="text-slate-600 animate-pulse" />}
+                     </div>
+                   )}
+                   <button onClick={() => setShowLogoutConfirm(true)} className="text-slate-500 hover:text-red-500 transition-colors ml-2"><LogOut size={18} /></button>
+                </div>
             </div>
             
             <div className="flex-1 overflow-y-auto p-5 space-y-6">
@@ -859,13 +907,15 @@ const App: React.FC = () => {
            ) : (
              <div className="flex flex-col items-center justify-center text-center p-12 max-w-lg space-y-6 animate-in fade-in zoom-in-95 duration-700">
                <div className="w-32 h-32 bg-slate-900 rounded-full border-4 border-slate-800 flex items-center justify-center mb-4">
-                 <MapIcon size={64} className="text-slate-700 opacity-50" />
+                 {sessionExists === null ? <Loader2 size={64} className="text-amber-500 animate-spin" /> : <MapIcon size={64} className="text-slate-700 opacity-50" />}
                </div>
-               <h2 className="font-medieval text-4xl text-slate-400">The Realm is Empty</h2>
+               <h2 className="font-medieval text-4xl text-slate-400">
+                 {sessionExists === null ? "Connecting to Realm..." : (sessionExists === false ? "Realm Not Found" : "The Realm is Empty")}
+               </h2>
                <p className="text-slate-500 leading-relaxed font-bold uppercase text-xs tracking-widest">
                  {role === 'dm' 
                     ? "No maps have been loaded into this session. As the Master of Fate, you must import an adventure bundle or room file to begin the journey." 
-                    : "Waiting for the Dungeon Master to materialize the world..."}
+                    : (sessionExists === null ? "Seeking the session code in the scrolls..." : (sessionExists === false ? "The code you entered does not exist. Please check your spelling and try again." : "Waiting for the Dungeon Master to materialize the world..."))}
                </p>
                {role === 'dm' && (
                  <label className="group relative py-5 px-10 bg-amber-600 hover:bg-amber-500 text-white font-black rounded-[2rem] uppercase tracking-[0.2em] cursor-pointer shadow-[0_0_30px_rgba(217,119,6,0.3)] transition-all border-b-4 border-amber-800 active:border-b-0 active:translate-y-1">
@@ -875,6 +925,9 @@ const App: React.FC = () => {
                    </div>
                    <input type="file" className="hidden" accept=".json" onChange={importData}/>
                  </label>
+               )}
+               {sessionExists === false && role === 'member' && (
+                  <button onClick={() => setRole(null)} className="py-4 px-8 bg-slate-800 hover:bg-slate-700 text-white font-black rounded-2xl uppercase text-[10px] tracking-widest transition-colors">Return to Menu</button>
                )}
              </div>
            )}
